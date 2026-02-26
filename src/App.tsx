@@ -7,6 +7,7 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { Camera, RefreshCw, UserPlus, Download, Check, AlertCircle, Loader2, ScanLine, X, Globe, FileText, Mail, MapPin, Briefcase, Phone, Smartphone } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import Tesseract from 'tesseract.js';
+import { GoogleGenAI } from '@google/genai';
 import { ContactInfo, parseContactFromText, parsePartialContact } from './contactParser';
 import confetti from 'canvas-confetti';
 
@@ -49,7 +50,14 @@ const downloadVCard = (contact: ContactInfo) => {
   URL.revokeObjectURL(url);
 };
 
-const resizeImage = (base64Str: string, maxWidth = 1600, maxHeight = 1600): Promise<string> => {
+/**
+ * Preprocess image for optimal OCR quality:
+ * 1. Resize to high resolution
+ * 2. Convert to grayscale
+ * 3. Apply adaptive contrast enhancement
+ * 4. Apply light sharpening
+ */
+const preprocessImageForOCR = (base64Str: string, maxWidth = 1800, maxHeight = 1800): Promise<string> => {
   return new Promise((resolve) => {
     const img = new Image();
     img.src = base64Str;
@@ -78,25 +86,45 @@ const resizeImage = (base64Str: string, maxWidth = 1600, maxHeight = 1600): Prom
         ctx.imageSmoothingQuality = 'high';
         ctx.drawImage(img, 0, 0, width, height);
 
-        // Enhance contrast for better OCR accuracy
         const imageData = ctx.getImageData(0, 0, width, height);
         const data = imageData.data;
-        const contrast = 1.3; // Moderate contrast boost
-        const factor = (259 * (contrast * 128 + 255)) / (255 * (259 - contrast * 128));
+
+        // Step 1: Convert to grayscale (better for OCR)
+        for (let i = 0; i < data.length; i += 4) {
+          const gray = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+          data[i] = gray;
+          data[i + 1] = gray;
+          data[i + 2] = gray;
+        }
+
+        // Step 2: Increase contrast (makes text stand out from background)
+        // Calculate histogram for adaptive contrast
+        let min = 255, max = 0;
+        for (let i = 0; i < data.length; i += 4) {
+          if (data[i] < min) min = data[i];
+          if (data[i] > max) max = data[i];
+        }
+        const range = max - min || 1;
 
         for (let i = 0; i < data.length; i += 4) {
-          // Convert to grayscale-weighted luminance for contrast calc
-          data[i] = Math.min(255, Math.max(0, factor * (data[i] - 128) + 128));     // R
-          data[i + 1] = Math.min(255, Math.max(0, factor * (data[i + 1] - 128) + 128)); // G
-          data[i + 2] = Math.min(255, Math.max(0, factor * (data[i + 2] - 128) + 128)); // B
+          // Stretch histogram to full range
+          const normalized = ((data[i] - min) / range) * 255;
+          // Apply S-curve contrast enhancement
+          const enhanced = 255 / (1 + Math.exp(-0.05 * (normalized - 128)));
+          const val = Math.min(255, Math.max(0, enhanced));
+          data[i] = val;
+          data[i + 1] = val;
+          data[i + 2] = val;
         }
+
         ctx.putImageData(imageData, 0, 0);
       }
-      // High quality for OCR readability
+      // PNG for lossless output (best for OCR)
       resolve(canvas.toDataURL('image/png'));
     };
   });
 };
+
 
 // --- Components ---
 
@@ -196,6 +224,12 @@ export default function App() {
     scanCard(images);
   };
 
+  /**
+   * Hybrid approach:
+   * 1. Tesseract.js → raw text from image (FREE, no tokens)
+   * 2. Gemini AI → parse raw text into structured JSON (tiny token cost, text only)
+   * 3. Regex fallback → if Gemini unavailable
+   */
   const scanCard = async (base64Images: string[]) => {
     setIsScanning(true);
     setError(null);
@@ -203,17 +237,16 @@ export default function App() {
     setStep('analyzing');
 
     try {
-      const compressedImages = await Promise.all(base64Images.map(img => resizeImage(img)));
+      // Step 1: Preprocess images for optimal OCR
+      const processedImages = await Promise.all(base64Images.map(img => preprocessImageForOCR(img)));
 
-      // Use Tesseract.js for OCR on each image
+      // Step 2: Tesseract.js OCR (FREE - runs in browser)
       let allText = '';
 
-      for (const img of compressedImages) {
+      for (const img of processedImages) {
         const result = await Tesseract.recognize(img, 'eng', {
           logger: (info: any) => {
-            // Update progress status during OCR
             if (info.status === 'recognizing text' && info.progress) {
-              // Try to parse partial text for live preview
               if (info.progress > 0.3 && allText) {
                 const partial = parsePartialContact(allText);
                 setPartialContact(prev => ({ ...prev, ...partial }));
@@ -224,13 +257,30 @@ export default function App() {
 
         allText += result.data.text + '\n';
 
-        // Update partial contact after each image
+        // Show partial results after each image
         const partial = parsePartialContact(allText);
         setPartialContact(prev => ({ ...prev, ...partial }));
       }
 
-      // Parse the full extracted text into structured contact info
-      const finalContact = parseContactFromText(allText);
+      console.log('OCR extracted text:', allText);
+
+      // Step 3: Parse extracted text into structured contact
+      let finalContact: ContactInfo;
+
+      // Try Gemini AI for intelligent text parsing (uses minimal tokens - TEXT ONLY)
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (apiKey && apiKey !== 'MY_GEMINI_API_KEY') {
+        try {
+          finalContact = await parseWithGemini(allText, apiKey);
+        } catch (geminiErr: any) {
+          console.warn('Gemini text parsing failed, falling back to regex:', geminiErr.message);
+          // Fallback to regex parser
+          finalContact = parseContactFromText(allText);
+        }
+      } else {
+        // No API key — use regex parser
+        finalContact = parseContactFromText(allText);
+      }
 
       // Check if we got ANY useful information
       const hasInfo = finalContact.firstName ||
@@ -256,7 +306,10 @@ export default function App() {
       console.error("Scanning error:", err);
       const errorMessage = err.message || JSON.stringify(err);
 
-      if (errorMessage.includes("extract any contact information")) {
+      if (errorMessage.includes('429') || errorMessage.includes('RESOURCE_EXHAUSTED')) {
+        setError("Rate limit reached. Please wait a moment and try again.");
+        setCooldown(30);
+      } else if (errorMessage.includes("extract any contact information")) {
         setError(errorMessage);
       } else {
         setError("Failed to scan the card. Please ensure the image is clear, well-lit, and try again.");
@@ -267,6 +320,67 @@ export default function App() {
       setIsScanning(false);
       setPartialContact(null);
     }
+  };
+
+  /**
+   * Parse raw OCR text using Gemini AI (TEXT ONLY — no images sent).
+   * This uses ~200-400 tokens per request vs 3000-5000 for image analysis.
+   */
+  const parseWithGemini = async (ocrText: string, apiKey: string): Promise<ContactInfo> => {
+    const ai = new GoogleGenAI({ apiKey });
+
+    const prompt = `You are a business card text parser. The following text was extracted from a visiting card using OCR.
+Parse it and extract the contact details into the JSON format specified below.
+
+IMPORTANT RULES:
+1. "firstName" and "lastName" should be the PERSON's name, NOT the company name.
+2. "company" should be the business/organization name (look for Pvt. Ltd., Inc., LLC, etc.).
+3. Distinguish between mobile and landline numbers based on labels (Mob/Cell vs Tel/Off) or number format.
+4. Clean up OCR errors in phone numbers, emails, and URLs.
+5. If a field is not found, use an empty string or empty array.
+
+OCR TEXT:
+---
+${ocrText.trim()}
+---
+
+JSON SCHEMA:
+{
+  "firstName": "string",
+  "lastName": "string",
+  "title": "string (job title/designation)",
+  "company": "string (company/organization name)",
+  "landlines": ["string"],
+  "mobiles": ["string"],
+  "email": "string",
+  "website": "string",
+  "address": "string",
+  "notes": "string"
+}`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.0-flash',
+      contents: prompt,
+      config: {
+        responseMimeType: 'application/json',
+      }
+    });
+
+    const text = response.text || '{}';
+    const parsed = JSON.parse(text);
+
+    return {
+      firstName: parsed.firstName || '',
+      lastName: parsed.lastName || '',
+      title: parsed.title || '',
+      company: parsed.company || '',
+      email: parsed.email || '',
+      website: parsed.website || '',
+      address: parsed.address || '',
+      notes: parsed.notes || '',
+      landlines: Array.isArray(parsed.landlines) ? parsed.landlines : [],
+      mobiles: Array.isArray(parsed.mobiles) ? parsed.mobiles : [],
+    };
   };
 
   const reset = () => {
@@ -651,7 +765,7 @@ export default function App() {
       {/* Footer Info */}
       <footer className="p-4 text-center mt-auto">
         <p className="text-[10px] text-stone-400 font-medium uppercase tracking-widest">
-          Powered by Tesseract OCR • 100% Free • Secure & Private
+          Powered by Tesseract OCR + Gemini AI • Smart & Private
         </p>
       </footer>
     </div>
