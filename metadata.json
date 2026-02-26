@@ -1,0 +1,5 @@
+{
+  "name": "CardScan AI",
+  "description": "Scan visiting cards using AI and save them directly to your contacts.",
+  "requestFramePermissions": ["camera"]
+}
