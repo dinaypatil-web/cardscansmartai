@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { Camera, RefreshCw, UserPlus, Download, Check, AlertCircle, Loader2, ScanLine, X, Globe, FileText, Mail, MapPin, Briefcase, Phone, Smartphone } from 'lucide-react';
+import { Camera, RefreshCw, UserPlus, Download, Check, AlertCircle, Loader2, ScanLine, X, Globe, FileText, Mail, MapPin, Briefcase, Phone, Smartphone, Edit3, Plus, Minus, ArrowRightLeft } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import Tesseract from 'tesseract.js';
 import { GoogleGenAI } from '@google/genai';
@@ -145,6 +145,7 @@ export default function App() {
   const [images, setImages] = useState<string[]>([]);
   const [isScanning, setIsScanning] = useState(false);
   const [contact, setContact] = useState<ContactInfo | null>(null);
+  const [editContact, setEditContact] = useState<ContactInfo | null>(null);
   const [partialContact, setPartialContact] = useState<Partial<ContactInfo> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [cooldown, setCooldown] = useState<number>(0);
@@ -153,6 +154,50 @@ export default function App() {
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  // Helper to update a single field in editContact
+  const updateField = (field: keyof ContactInfo, value: any) => {
+    setEditContact(prev => prev ? { ...prev, [field]: value } : prev);
+  };
+
+  // Helper to update a phone number in a list
+  const updatePhone = (type: 'mobiles' | 'landlines', index: number, value: string) => {
+    setEditContact(prev => {
+      if (!prev) return prev;
+      const list = [...prev[type]];
+      list[index] = value;
+      return { ...prev, [type]: list };
+    });
+  };
+
+  // Helper to add a new phone number
+  const addPhone = (type: 'mobiles' | 'landlines') => {
+    setEditContact(prev => {
+      if (!prev) return prev;
+      return { ...prev, [type]: [...prev[type], ''] };
+    });
+  };
+
+  // Helper to remove a phone number
+  const removePhone = (type: 'mobiles' | 'landlines', index: number) => {
+    setEditContact(prev => {
+      if (!prev) return prev;
+      const list = prev[type].filter((_, i) => i !== index);
+      return { ...prev, [type]: list };
+    });
+  };
+
+  // Helper to toggle a phone between mobile and landline
+  const togglePhoneType = (fromType: 'mobiles' | 'landlines', index: number) => {
+    setEditContact(prev => {
+      if (!prev) return prev;
+      const toType = fromType === 'mobiles' ? 'landlines' : 'mobiles';
+      const number = prev[fromType][index];
+      const fromList = prev[fromType].filter((_, i) => i !== index);
+      const toList = [...prev[toType], number];
+      return { ...prev, [fromType]: fromList, [toType]: toList };
+    });
+  };
 
   // Initialize Camera
   useEffect(() => {
@@ -276,6 +321,7 @@ export default function App() {
 
       if (hasInfo) {
         setContact(finalContact);
+        setEditContact({ ...finalContact });
         setStep('result');
         confetti({
           particleCount: 100,
@@ -470,6 +516,7 @@ Return ONLY a valid JSON object:
   const reset = () => {
     setImages([]);
     setContact(null);
+    setEditContact(null);
     setPartialContact(null);
     setError(null);
     setIsScanning(false);
@@ -737,93 +784,237 @@ Return ONLY a valid JSON object:
                 </motion.div>
               )}
 
-              {contact && (
+              {editContact && (
                 <motion.div
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
-                  className="bg-white p-8 rounded-[2rem] shadow-xl shadow-stone-200/50 border border-stone-100 space-y-8"
+                  className="bg-white p-6 sm:p-8 rounded-[2rem] shadow-xl shadow-stone-200/50 border border-stone-100 space-y-6"
                 >
+                  {/* Header */}
+                  <div className="flex items-center gap-3 pb-2 border-b border-stone-100">
+                    <div className="w-9 h-9 bg-amber-50 rounded-xl flex items-center justify-center">
+                      <Edit3 className="w-4 h-4 text-amber-600" />
+                    </div>
+                    <div>
+                      <p className="font-bold text-sm text-stone-900">Verify & Edit</p>
+                      <p className="text-[10px] text-stone-400">Review the extracted data. Tap any field to correct it.</p>
+                    </div>
+                  </div>
+
+                  {/* Name Fields */}
+                  <div className="space-y-2">
+                    <p className="text-[10px] uppercase tracking-widest font-bold text-emerald-600">Full Name</p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[10px] text-stone-400 font-medium">First Name</label>
+                        <input
+                          type="text"
+                          value={editContact.firstName}
+                          onChange={e => updateField('firstName', e.target.value)}
+                          placeholder="First name"
+                          className="w-full mt-0.5 px-3 py-2.5 border border-stone-200 rounded-xl text-sm font-medium text-stone-900 bg-stone-50/50 focus:bg-white focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 outline-none transition-all"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-stone-400 font-medium">Last Name</label>
+                        <input
+                          type="text"
+                          value={editContact.lastName}
+                          onChange={e => updateField('lastName', e.target.value)}
+                          placeholder="Last name"
+                          className="w-full mt-0.5 px-3 py-2.5 border border-stone-200 rounded-xl text-sm font-medium text-stone-900 bg-stone-50/50 focus:bg-white focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 outline-none transition-all"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Title & Company */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <Briefcase className="w-3.5 h-3.5 text-stone-400" />
+                        <label className="text-[10px] uppercase tracking-widest font-bold text-stone-400">Designation</label>
+                      </div>
+                      <input
+                        type="text"
+                        value={editContact.title || ''}
+                        onChange={e => updateField('title', e.target.value)}
+                        placeholder="Job title / Designation"
+                        className="w-full px-3 py-2.5 border border-stone-200 rounded-xl text-sm font-medium text-stone-900 bg-stone-50/50 focus:bg-white focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 outline-none transition-all"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <Briefcase className="w-3.5 h-3.5 text-stone-400" />
+                        <label className="text-[10px] uppercase tracking-widest font-bold text-stone-400">Company</label>
+                      </div>
+                      <input
+                        type="text"
+                        value={editContact.company || ''}
+                        onChange={e => updateField('company', e.target.value)}
+                        placeholder="Company / Organization"
+                        className="w-full px-3 py-2.5 border border-stone-200 rounded-xl text-sm font-medium text-stone-900 bg-stone-50/50 focus:bg-white focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 outline-none transition-all"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Phone Numbers Section */}
+                  <div className="space-y-3">
+                    {/* Landlines */}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Phone className="w-3.5 h-3.5 text-stone-400" />
+                          <label className="text-[10px] uppercase tracking-widest font-bold text-stone-400">Landline Numbers</label>
+                        </div>
+                        <button
+                          onClick={() => addPhone('landlines')}
+                          className="p-1 rounded-lg hover:bg-emerald-50 text-emerald-500 hover:text-emerald-600 transition-colors"
+                          title="Add landline"
+                        >
+                          <Plus className="w-4 h-4" />
+                        </button>
+                      </div>
+                      {editContact.landlines.map((num, idx) => (
+                        <div key={`landline-${idx}`} className="flex items-center gap-2">
+                          <input
+                            type="tel"
+                            value={num}
+                            onChange={e => updatePhone('landlines', idx, e.target.value)}
+                            placeholder="Landline number"
+                            className="flex-1 px-3 py-2.5 border border-stone-200 rounded-xl text-sm font-medium text-stone-900 bg-stone-50/50 focus:bg-white focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 outline-none transition-all"
+                          />
+                          <button
+                            onClick={() => togglePhoneType('landlines', idx)}
+                            className="p-2 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-500 transition-colors"
+                            title="Move to Mobile"
+                          >
+                            <ArrowRightLeft className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => removePhone('landlines', idx)}
+                            className="p-2 rounded-xl bg-red-50 hover:bg-red-100 text-red-400 transition-colors"
+                            title="Remove"
+                          >
+                            <Minus className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                      {editContact.landlines.length === 0 && (
+                        <p className="text-xs text-stone-300 italic pl-1">No landline numbers detected</p>
+                      )}
+                    </div>
+
+                    {/* Mobiles */}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Smartphone className="w-3.5 h-3.5 text-stone-400" />
+                          <label className="text-[10px] uppercase tracking-widest font-bold text-stone-400">Mobile Numbers</label>
+                        </div>
+                        <button
+                          onClick={() => addPhone('mobiles')}
+                          className="p-1 rounded-lg hover:bg-emerald-50 text-emerald-500 hover:text-emerald-600 transition-colors"
+                          title="Add mobile"
+                        >
+                          <Plus className="w-4 h-4" />
+                        </button>
+                      </div>
+                      {editContact.mobiles.map((num, idx) => (
+                        <div key={`mobile-${idx}`} className="flex items-center gap-2">
+                          <input
+                            type="tel"
+                            value={num}
+                            onChange={e => updatePhone('mobiles', idx, e.target.value)}
+                            placeholder="Mobile number"
+                            className="flex-1 px-3 py-2.5 border border-stone-200 rounded-xl text-sm font-medium text-stone-900 bg-stone-50/50 focus:bg-white focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 outline-none transition-all"
+                          />
+                          <button
+                            onClick={() => togglePhoneType('mobiles', idx)}
+                            className="p-2 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-500 transition-colors"
+                            title="Move to Landline"
+                          >
+                            <ArrowRightLeft className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => removePhone('mobiles', idx)}
+                            className="p-2 rounded-xl bg-red-50 hover:bg-red-100 text-red-400 transition-colors"
+                            title="Remove"
+                          >
+                            <Minus className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                      {editContact.mobiles.length === 0 && (
+                        <p className="text-xs text-stone-300 italic pl-1">No mobile numbers detected</p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Email */}
                   <div className="space-y-1">
-                    <p className="text-[10px] uppercase tracking-widest font-bold text-emerald-600">Contact Name</p>
-                    <h3 className="text-2xl font-bold tracking-tight text-stone-900">
-                      {contact.firstName} {contact.lastName}
-                    </h3>
-                    {contact.title && <p className="text-stone-700 font-medium">{contact.title}</p>}
-                    {contact.company && <p className="text-stone-500 font-medium">{contact.company}</p>}
+                    <div className="flex items-center gap-2">
+                      <Mail className="w-3.5 h-3.5 text-stone-400" />
+                      <label className="text-[10px] uppercase tracking-widest font-bold text-stone-400">Email</label>
+                    </div>
+                    <input
+                      type="email"
+                      value={editContact.email || ''}
+                      onChange={e => updateField('email', e.target.value)}
+                      placeholder="email@example.com"
+                      className="w-full px-3 py-2.5 border border-stone-200 rounded-xl text-sm font-medium text-stone-900 bg-stone-50/50 focus:bg-white focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 outline-none transition-all"
+                    />
                   </div>
 
-                  <div className="grid gap-6">
-                    {contact.landlines?.map((num, idx) => (
-                      <div key={`landline-${idx}`} className="flex items-center gap-4">
-                        <div className="w-10 h-10 rounded-full bg-stone-50 flex items-center justify-center text-stone-400">
-                          <Phone className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <p className="text-[10px] uppercase tracking-widest font-bold text-stone-400">Landline Number {contact.landlines.length > 1 ? idx + 1 : ''}</p>
-                          <p className="font-medium">{num}</p>
-                        </div>
-                      </div>
-                    ))}
-                    {contact.mobiles?.map((num, idx) => (
-                      <div key={`mobile-${idx}`} className="flex items-center gap-4">
-                        <div className="w-10 h-10 rounded-full bg-stone-50 flex items-center justify-center text-stone-400">
-                          <Smartphone className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <p className="text-[10px] uppercase tracking-widest font-bold text-stone-400">Mobile Number {contact.mobiles.length > 1 ? idx + 1 : ''}</p>
-                          <p className="font-medium">{num}</p>
-                        </div>
-                      </div>
-                    ))}
-                    {contact.email && (
-                      <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 rounded-full bg-stone-50 flex items-center justify-center text-stone-400">
-                          <Mail className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <p className="text-[10px] uppercase tracking-widest font-bold text-stone-400">Email</p>
-                          <p className="font-medium">{contact.email}</p>
-                        </div>
-                      </div>
-                    )}
-                    {contact.website && (
-                      <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 rounded-full bg-stone-50 flex items-center justify-center text-stone-400">
-                          <Globe className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <p className="text-[10px] uppercase tracking-widest font-bold text-stone-400">Website</p>
-                          <p className="font-medium">{contact.website}</p>
-                        </div>
-                      </div>
-                    )}
-                    {contact.address && (
-                      <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 rounded-full bg-stone-50 flex items-center justify-center text-stone-400">
-                          <MapPin className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <p className="text-[10px] uppercase tracking-widest font-bold text-stone-400">Address</p>
-                          <p className="font-medium text-sm leading-relaxed">{contact.address}</p>
-                        </div>
-                      </div>
-                    )}
-                    {contact.notes && (
-                      <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 rounded-full bg-stone-50 flex items-center justify-center text-stone-400">
-                          <FileText className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <p className="text-[10px] uppercase tracking-widest font-bold text-stone-400">Notes</p>
-                          <p className="font-medium text-sm leading-relaxed">{contact.notes}</p>
-                        </div>
-                      </div>
-                    )}
+                  {/* Website */}
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <Globe className="w-3.5 h-3.5 text-stone-400" />
+                      <label className="text-[10px] uppercase tracking-widest font-bold text-stone-400">Website</label>
+                    </div>
+                    <input
+                      type="url"
+                      value={editContact.website || ''}
+                      onChange={e => updateField('website', e.target.value)}
+                      placeholder="www.example.com"
+                      className="w-full px-3 py-2.5 border border-stone-200 rounded-xl text-sm font-medium text-stone-900 bg-stone-50/50 focus:bg-white focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 outline-none transition-all"
+                    />
                   </div>
 
-                  <div className="pt-4 flex gap-3">
+                  {/* Address */}
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <MapPin className="w-3.5 h-3.5 text-stone-400" />
+                      <label className="text-[10px] uppercase tracking-widest font-bold text-stone-400">Address</label>
+                    </div>
+                    <textarea
+                      value={editContact.address || ''}
+                      onChange={e => updateField('address', e.target.value)}
+                      placeholder="Full postal address"
+                      rows={2}
+                      className="w-full px-3 py-2.5 border border-stone-200 rounded-xl text-sm font-medium text-stone-900 bg-stone-50/50 focus:bg-white focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 outline-none transition-all resize-none"
+                    />
+                  </div>
+
+                  {/* Notes */}
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <FileText className="w-3.5 h-3.5 text-stone-400" />
+                      <label className="text-[10px] uppercase tracking-widest font-bold text-stone-400">Notes</label>
+                    </div>
+                    <textarea
+                      value={editContact.notes || ''}
+                      onChange={e => updateField('notes', e.target.value)}
+                      placeholder="GST, PAN, social media, or other notes"
+                      rows={2}
+                      className="w-full px-3 py-2.5 border border-stone-200 rounded-xl text-sm font-medium text-stone-900 bg-stone-50/50 focus:bg-white focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 outline-none transition-all resize-none"
+                    />
+                  </div>
+
+                  {/* Action Buttons */}
+                  <div className="pt-2 flex gap-3">
                     <button
-                      onClick={() => downloadVCard(contact)}
+                      onClick={() => downloadVCard(editContact)}
                       className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-4 rounded-2xl flex items-center justify-center gap-2 shadow-lg shadow-emerald-200 transition-all active:scale-[0.98]"
                     >
                       <UserPlus className="w-5 h-5" />
