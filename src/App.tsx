@@ -49,7 +49,7 @@ const downloadVCard = (contact: ContactInfo) => {
   URL.revokeObjectURL(url);
 };
 
-const resizeImage = (base64Str: string, maxWidth = 1024, maxHeight = 1024): Promise<string> => {
+const resizeImage = (base64Str: string, maxWidth = 1600, maxHeight = 1600): Promise<string> => {
   return new Promise((resolve) => {
     const img = new Image();
     img.src = base64Str;
@@ -77,9 +77,23 @@ const resizeImage = (base64Str: string, maxWidth = 1024, maxHeight = 1024): Prom
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = 'high';
         ctx.drawImage(img, 0, 0, width, height);
+
+        // Enhance contrast for better OCR accuracy
+        const imageData = ctx.getImageData(0, 0, width, height);
+        const data = imageData.data;
+        const contrast = 1.3; // Moderate contrast boost
+        const factor = (259 * (contrast * 128 + 255)) / (255 * (259 - contrast * 128));
+
+        for (let i = 0; i < data.length; i += 4) {
+          // Convert to grayscale-weighted luminance for contrast calc
+          data[i] = Math.min(255, Math.max(0, factor * (data[i] - 128) + 128));     // R
+          data[i + 1] = Math.min(255, Math.max(0, factor * (data[i + 1] - 128) + 128)); // G
+          data[i + 2] = Math.min(255, Math.max(0, factor * (data[i + 2] - 128) + 128)); // B
+        }
+        ctx.putImageData(imageData, 0, 0);
       }
-      // Balanced quality for readability vs payload size
-      resolve(canvas.toDataURL('image/jpeg', 0.7));
+      // High quality for OCR readability
+      resolve(canvas.toDataURL('image/png'));
     };
   });
 };

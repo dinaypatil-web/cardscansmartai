@@ -1,6 +1,6 @@
 /**
- * Contact Parser - Extracts structured contact information from raw OCR text.
- * Uses regex patterns and heuristics to identify fields from business card text.
+ * Contact Parser v2 - Enhanced extraction of structured contact information from raw OCR text.
+ * Uses scoring-based classification, multi-pass analysis, and robust heuristics.
  */
 
 export interface ContactInfo {
@@ -16,166 +16,434 @@ export interface ContactInfo {
   notes?: string;
 }
 
-// --- Regex Patterns ---
+// ============================================================
+// REGEX PATTERNS
+// ============================================================
 
-const EMAIL_REGEX = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/gi;
+const EMAIL_REGEX = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g;
 
-const PHONE_REGEX = /(?:[\+]?\d{1,3}[\s\-.]?)?\(?\d{2,5}\)?[\s\-.]?\d{2,5}[\s\-.]?\d{2,6}/g;
+// Comprehensive phone regex — handles international formats, brackets, dots, dashes, spaces
+const PHONE_REGEX = /(?:(?:\+|00)\s*\d{1,3}[\s.\-]?)?(?:\(?\d{2,5}\)?[\s.\-]?)?\d{2,5}[\s.\-]?\d{2,6}(?:\s*(?:\/|,)\s*\d{2,6})*/g;
 
-const WEBSITE_REGEX = /(?:https?:\/\/)?(?:www\.)?[a-zA-Z0-9][a-zA-Z0-9\-]*\.[a-zA-Z]{2,}(?:\.[a-zA-Z]{2,})?(?:\/[^\s]*)*/gi;
+// Website regex — matches URLs and domain patterns
+const WEBSITE_REGEX = /(?:https?:\/\/)?(?:www\.)?[a-zA-Z0-9](?:[a-zA-Z0-9\-]*[a-zA-Z0-9])?(?:\.[a-zA-Z]{2,})+(?:\/[^\s,)]*)?/gi;
 
 const PIN_CODE_REGEX = /\b\d{5,6}\b/;
 
-// Common job title keywords (case-insensitive matching)
-const JOB_TITLE_KEYWORDS = [
-  'ceo', 'cto', 'cfo', 'coo', 'cmo', 'cio', 'vp',
-  'president', 'vice president',
-  'director', 'manager', 'head', 'lead', 'chief',
-  'engineer', 'developer', 'architect', 'designer', 'analyst',
-  'consultant', 'advisor', 'specialist', 'coordinator',
-  'executive', 'officer', 'partner', 'founder', 'co-founder',
-  'associate', 'assistant', 'supervisor', 'administrator',
-  'accountant', 'advocate', 'attorney', 'lawyer',
-  'doctor', 'dr\\.', 'professor', 'prof\\.',
-  'sales', 'marketing', 'operations', 'finance',
-  'senior', 'junior', 'sr\\.', 'jr\\.',
-  'general manager', 'managing director', 'proprietor', 'owner',
+// ============================================================
+// KEYWORD DATABASES
+// ============================================================
+
+// Job title keywords with weights (higher = more confident)
+const JOB_TITLE_PATTERNS: Array<{ pattern: RegExp; weight: number }> = [
+  // C-suite and leadership
+  { pattern: /\b(?:CEO|CTO|CFO|COO|CMO|CIO|CHRO)\b/i, weight: 10 },
+  { pattern: /\bchief\s+\w+\s+officer\b/i, weight: 10 },
+  { pattern: /\bmanaging\s+director\b/i, weight: 10 },
+  { pattern: /\bgeneral\s+manager\b/i, weight: 9 },
+  { pattern: /\bvice\s+president\b/i, weight: 9 },
+  { pattern: /\b(?:president|chairman|chairperson)\b/i, weight: 9 },
+
+  // Founders and owners
+  { pattern: /\b(?:founder|co[\-\s]?founder|proprietor|owner|partner)\b/i, weight: 9 },
+
+  // Director/Manager level
+  { pattern: /\b(?:sr\.?|senior|junior|jr\.?|asst\.?|asstt\.?|assistant|associate|deputy)\s+\w+/i, weight: 5 },
+  { pattern: /\bdirector\b/i, weight: 8 },
+  { pattern: /\bmanager\b/i, weight: 7 },
+  { pattern: /\bhead\s+(?:of\s+)?\w+/i, weight: 7 },
+  { pattern: /\blead\b/i, weight: 6 },
+  { pattern: /\bsupervisor\b/i, weight: 6 },
+
+  // Professional roles — specific compound titles
+  { pattern: /\b(?:software|hardware|mechanical|electrical|civil|chemical)\s+engineer\b/i, weight: 8 },
+  { pattern: /\b(?:project|product|program|operations|sales|marketing|business|brand)\s+manager\b/i, weight: 8 },
+
+  // Professional roles — single keywords
+  { pattern: /\bengineer(?:ing)?\b/i, weight: 6 },
+  { pattern: /\bdeveloper\b/i, weight: 6 },
+  { pattern: /\barchitect\b/i, weight: 6 },
+  { pattern: /\bdesigner\b/i, weight: 6 },
+  { pattern: /\banalyst\b/i, weight: 6 },
+  { pattern: /\bconsultant\b/i, weight: 6 },
+  { pattern: /\bcoordinator\b/i, weight: 5 },
+  { pattern: /\bspecialist\b/i, weight: 5 },
+  { pattern: /\bexecutive\b/i, weight: 5 },
+  { pattern: /\badvisor\b/i, weight: 5 },
+  { pattern: /\badministrator\b/i, weight: 5 },
+  { pattern: /\baccountant\b/i, weight: 6 },
+  { pattern: /\badvocate\b/i, weight: 7 },
+  { pattern: /\battorney\b/i, weight: 7 },
+  { pattern: /\blawyer\b/i, weight: 7 },
+  { pattern: /\bsolicitor\b/i, weight: 7 },
+  { pattern: /\b(?:doctor|physician|surgeon)\b/i, weight: 7 },
+  { pattern: /\b(?:professor|prof\.)\b/i, weight: 7 },
+  { pattern: /\bteacher\b/i, weight: 5 },
+  { pattern: /\bprincipal\b/i, weight: 5 },
+  { pattern: /\bsecretary\b/i, weight: 5 },
+  { pattern: /\btreasurer\b/i, weight: 5 },
+  { pattern: /\breceptionist\b/i, weight: 5 },
+  { pattern: /\btechnician\b/i, weight: 5 },
+  { pattern: /\binspector\b/i, weight: 5 },
+  { pattern: /\bofficer\b/i, weight: 4 },
+  { pattern: /\bassistant\b/i, weight: 3 },
+
+  // Dept keywords alone (lower weight — could be part of address)
+  { pattern: /\b(?:sales|marketing|operations|finance|accounts|admin|hr|procurement)\b/i, weight: 2 },
 ];
 
-// Common company suffixes
-const COMPANY_SUFFIXES = [
-  'ltd', 'limited', 'llc', 'llp', 'inc', 'incorporated',
-  'corp', 'corporation', 'co\\.', 'company',
-  'pvt', 'private', 'group', 'enterprise', 'enterprises',
-  'solutions', 'services', 'technologies', 'tech',
-  'industries', 'associates', 'consultants', 'consulting',
-  'international', 'global', 'ventures', 'holdings',
-  'foundation', 'institute', 'academy', 'labs', 'studio',
-  'systems', 'infotech', 'infosystems',
+// Company indicators with weights
+const COMPANY_PATTERNS: Array<{ pattern: RegExp; weight: number }> = [
+  // Strong legal suffixes
+  { pattern: /\b(?:pvt|private)\s*\.?\s*(?:ltd|limited)\b/i, weight: 10 },
+  { pattern: /\bltd\.?\b/i, weight: 9 },
+  { pattern: /\blimited\b/i, weight: 9 },
+  { pattern: /\bllc\b/i, weight: 9 },
+  { pattern: /\bllp\b/i, weight: 9 },
+  { pattern: /\binc\.?\b/i, weight: 9 },
+  { pattern: /\bincorporated\b/i, weight: 9 },
+  { pattern: /\bcorp\.?\b/i, weight: 9 },
+  { pattern: /\bcorporation\b/i, weight: 9 },
+  { pattern: /\b(?:co|company)\b\.?/i, weight: 6 },
+
+  // Business entity types
+  { pattern: /\bgroup\s+of\s+(?:companies|industries)\b/i, weight: 10 },
+  { pattern: /\bgroup\b/i, weight: 5 },
+  { pattern: /\b(?:enterprises?|ventures?|holdings?)\b/i, weight: 7 },
+
+  // Service/Industry keywords
+  { pattern: /\b(?:solutions?|services?|technologies|tech)\b/i, weight: 5 },
+  { pattern: /\b(?:industries|associates|consultants|consulting)\b/i, weight: 6 },
+  { pattern: /\b(?:international|global)\b/i, weight: 3 },
+  { pattern: /\b(?:foundation|institute|academy)\b/i, weight: 5 },
+  { pattern: /\b(?:labs?|studio|systems?)\b/i, weight: 4 },
+  { pattern: /\b(?:infotech|infosystems|softech|softtech)\b/i, weight: 7 },
+  { pattern: /\b(?:traders?|trading|exports?|imports?|distributors?)\b/i, weight: 6 },
+  { pattern: /\b(?:hospital|clinic|pharmacy|medical)\b/i, weight: 5 },
+  { pattern: /\b(?:builders?|construction|realty|real\s*estate|developers?)\b/i, weight: 5 },
+  { pattern: /\b(?:motors?|automobiles?|auto)\b/i, weight: 4 },
+  { pattern: /\b(?:jewellers?|jewelers?|textiles?|garments?)\b/i, weight: 5 },
+  { pattern: /\b(?:publishers?|printing|press)\b/i, weight: 5 },
+  { pattern: /\b(?:agency|agencies)\b/i, weight: 5 },
 ];
 
-// Phone label patterns that indicate mobile
-const MOBILE_LABELS = /(?:mob(?:ile)?|cell|m\s*:|whatsapp)/i;
-const LANDLINE_LABELS = /(?:tel(?:ephone)?|phone|ph|off(?:ice)?|fax|t\s*:|o\s*:|land(?:line)?)/i;
+// Address keywords
+const ADDRESS_KEYWORDS = [
+  'road', 'rd\\.?', 'street', 'st\\.?', 'avenue', 'ave',
+  'lane', 'gali', 'marg', 'path', 'chowk', 'square',
+  'building', 'bldg', 'tower', 'complex', 'arcade', 'plaza', 'mall', 'centre', 'center',
+  'floor', 'flr', 'suite', 'ste', 'flat', 'plot', 'shop', 'office', 'cabin', 'room',
+  'sector', 'block', 'phase', 'wing',
+  'nagar', 'colony', 'society', 'housing', 'residency', 'enclave', 'vihar', 'puram',
+  'estate', 'layout', 'extension', 'extn',
+  'village', 'taluk', 'taluka', 'tehsil', 'mandal',
+  'city', 'town', 'district', 'dist',
+  'state', 'province',
+  'near', 'opp\\.?', 'opposite', 'beside', 'behind', 'next\\s+to', 'adjacent',
+  'post\\s+office', 'p\\.?o\\.?',
+  'pin', 'zip',
+];
 
-// --- Helper Functions ---
+// Indian and major international cities for address detection
+const CITY_NAMES = [
+  'mumbai', 'delhi', 'bangalore', 'bengaluru', 'chennai', 'kolkata', 'hyderabad',
+  'pune', 'ahmedabad', 'jaipur', 'lucknow', 'kanpur', 'nagpur', 'indore',
+  'thane', 'bhopal', 'visakhapatnam', 'vadodara', 'surat', 'nashik',
+  'faridabad', 'ghaziabad', 'noida', 'gurgaon', 'gurugram',
+  'chandigarh', 'coimbatore', 'kochi', 'patna', 'agra', 'varanasi',
+  'rajkot', 'meerut', 'mysore', 'mysuru', 'mangalore', 'mangaluru',
+  'trivandrum', 'thiruvananthapuram', 'madurai', 'aurangabad',
+  'new york', 'london', 'san francisco', 'los angeles', 'chicago', 'toronto',
+  'singapore', 'dubai', 'hong kong', 'sydney', 'tokyo', 'shanghai',
+  'maharashtra', 'karnataka', 'tamil nadu', 'telangana', 'gujarat',
+  'rajasthan', 'uttar pradesh', 'madhya pradesh', 'kerala', 'west bengal',
+  'andhra pradesh', 'bihar', 'punjab', 'haryana', 'goa',
+  'india', 'usa', 'uk', 'uae', 'canada', 'australia',
+];
+
+// Phone label patterns
+const MOBILE_LABELS = /(?:mob(?:ile)?|cell|m\s*[:.]|whatsapp|wa)/i;
+const LANDLINE_LABELS = /(?:tel(?:ephone)?|phone|ph\s*[:.]|off(?:ice)?|fax|t\s*[:.]|o\s*[:.]|land(?:line)?|res(?:idence)?|r\s*[:.])(?!\w)/i;
+
+// Name prefixes — honorifics that hint a line is a person name
+const NAME_PREFIXES = /^(?:mr\.?|mrs\.?|ms\.?|miss|dr\.?|prof\.?|shri\.?|smt\.?|ca\.?|cs\.?|adv\.?|er\.?|ar\.?)\s+/i;
+
+// ============================================================
+// OCR TEXT PREPROCESSING
+// ============================================================
+
+function preprocessOcrText(rawText: string): string {
+  let text = rawText;
+
+  // Fix common OCR misreads
+  text = text.replace(/[''`]/g, "'");
+  text = text.replace(/[""]/g, '"');
+  text = text.replace(/—|–/g, '-');
+  text = text.replace(/\u00a0/g, ' '); // non-breaking space
+
+  // Fix 'l' misread as '|' or 'I' in context
+  // Fix '0' misread as 'O' in phone numbers — handled per-field
+
+  // Remove stray special characters that are OCR noise
+  text = text.replace(/[^\S\n]+/g, ' '); // collapse whitespace (except newlines)
+
+  // Remove lines that are just noise characters
+  text = text.split('\n').map(line => {
+    const cleaned = line.trim();
+    // Remove lines that are mostly special chars (symbols, bars, dots)
+    const alphanumCount = (cleaned.match(/[a-zA-Z0-9]/g) || []).length;
+    if (cleaned.length > 0 && alphanumCount / cleaned.length < 0.3) {
+      return ''; // likely OCR noise
+    }
+    return cleaned;
+  }).join('\n');
+
+  return text;
+}
 
 function cleanLine(line: string): string {
-  return line.replace(/[|]/g, '').trim();
+  return line
+    .replace(/^[\s|:•·*\-–—=]+/, '') // leading noise
+    .replace(/[\s|:•·*\-–—=]+$/, '') // trailing noise
+    .replace(/\s{2,}/g, ' ')         // collapse spaces
+    .trim();
 }
 
-function isPhoneLine(line: string): boolean {
+// ============================================================
+// FIELD DETECTION FUNCTIONS (with scoring)
+// ============================================================
+
+function getPhoneScore(line: string): { score: number; numbers: string[] } {
   const digits = line.replace(/\D/g, '');
-  return digits.length >= 7;
-}
+  if (digits.length < 7) return { score: 0, numbers: [] };
 
-function isEmailLine(line: string): boolean {
-  return EMAIL_REGEX.test(line);
-}
+  // Don't match lines that are primarily text with an incidental number
+  const textRatio = (line.match(/[a-zA-Z]/g) || []).length / line.length;
 
-function isWebsiteLine(line: string): boolean {
-  // Reset regex
-  WEBSITE_REGEX.lastIndex = 0;
-  const match = WEBSITE_REGEX.exec(line);
-  if (!match) return false;
-  // Exclude emails matched as websites
-  if (line.includes('@')) return false;
-  return true;
-}
-
-function isTitleLine(line: string): boolean {
-  const lower = line.toLowerCase();
-  return JOB_TITLE_KEYWORDS.some(keyword => {
-    const regex = new RegExp(`\\b${keyword}\\b`, 'i');
-    return regex.test(lower);
-  });
-}
-
-function isCompanyLine(line: string): boolean {
-  const lower = line.toLowerCase();
-  return COMPANY_SUFFIXES.some(suffix => {
-    const regex = new RegExp(`\\b${suffix}\\b`, 'i');
-    return regex.test(lower);
-  });
-}
-
-function isAddressLine(line: string): boolean {
-  const lower = line.toLowerCase();
-  // Common address indicators
-  const addressKeywords = [
-    'road', 'rd', 'street', 'st', 'avenue', 'ave', 'lane', 'ln',
-    'building', 'bldg', 'floor', 'suite', 'ste', 'flat', 'plot',
-    'sector', 'block', 'nagar', 'colony', 'area', 'park',
-    'city', 'town', 'district', 'state', 'country',
-    'mumbai', 'delhi', 'bangalore', 'chennai', 'kolkata', 'pune',
-    'hyderabad', 'ahmedabad', 'india', 'usa',
-    'near', 'opp', 'opposite', 'beside', 'behind',
-  ];
-  const hasAddressKeyword = addressKeywords.some(kw => lower.includes(kw));
-  const hasPinCode = PIN_CODE_REGEX.test(line);
-  return hasAddressKeyword || hasPinCode;
-}
-
-function classifyPhone(line: string, number: string): 'mobile' | 'landline' {
-  // Check if line has explicit labels
-  if (MOBILE_LABELS.test(line)) return 'mobile';
-  if (LANDLINE_LABELS.test(line)) return 'landline';
-
-  // Heuristic: Indian mobile numbers start with 6-9 and have 10 digits
-  const digits = number.replace(/\D/g, '');
-  
-  // Remove country code if present
-  let localDigits = digits;
-  if (digits.startsWith('91') && digits.length > 10) {
-    localDigits = digits.slice(2);
-  } else if (digits.startsWith('1') && digits.length === 11) {
-    localDigits = digits.slice(1);
+  const numbers: string[] = [];
+  PHONE_REGEX.lastIndex = 0;
+  let match;
+  while ((match = PHONE_REGEX.exec(line)) !== null) {
+    const matchDigits = match[0].replace(/\D/g, '');
+    if (matchDigits.length >= 7 && matchDigits.length <= 15) {
+      numbers.push(match[0].trim());
+    }
   }
 
-  // 10-digit number starting with 6-9 is likely mobile (Indian)
+  if (numbers.length === 0) return { score: 0, numbers: [] };
+
+  let score = 5;
+  // Boost: has phone labels
+  if (/(?:ph(?:one)?|tel|mob(?:ile)?|cell|fax|office|off|land|res|whatsapp|contact)/i.test(line)) score += 3;
+  // Boost: has + prefix (international)
+  if (/\+\d/.test(line)) score += 2;
+  // Boost: all digits in a well-formatted number
+  if (textRatio < 0.3) score += 2;
+  // Reduce: too many alpha characters (might be a misread)
+  if (textRatio > 0.5) score -= 3;
+
+  return { score: Math.max(0, score), numbers };
+}
+
+function getEmailScore(line: string): { score: number; email: string } {
+  EMAIL_REGEX.lastIndex = 0;
+  const match = line.match(EMAIL_REGEX);
+  if (!match) return { score: 0, email: '' };
+
+  let score = 8; // Emails are highly distinctive
+  if (/(?:email|e[\-\s]?mail|mail)\s*[:.]?\s*/i.test(line)) score += 2;
+
+  return { score, email: match[0].toLowerCase() };
+}
+
+function getWebsiteScore(line: string): { score: number; url: string } {
+  if (line.includes('@')) return { score: 0, url: '' }; // It's an email, not a website
+
+  WEBSITE_REGEX.lastIndex = 0;
+  const match = line.match(WEBSITE_REGEX);
+  if (!match) return { score: 0, url: '' };
+
+  // Filter out obvious non-websites
+  const url = match[0];
+  if (/\.(jpg|jpeg|png|gif|pdf|doc)$/i.test(url)) return { score: 0, url: '' };
+
+  let score = 7;
+  if (/(?:www\.|https?:\/\/)/i.test(url)) score += 3;
+  if (/(?:web(?:site)?|url|www|visit)\s*[:.]?\s*/i.test(line)) score += 2;
+
+  return { score, url: url.startsWith('http') ? url : 'https://' + url };
+}
+
+function getTitleScore(line: string): number {
+  let maxScore = 0;
+  for (const { pattern, weight } of JOB_TITLE_PATTERNS) {
+    if (pattern.test(line)) {
+      maxScore = Math.max(maxScore, weight);
+    }
+  }
+
+  // Boost: short line (titles are usually concise)
+  const wordCount = line.split(/\s+/).length;
+  if (wordCount <= 5 && maxScore > 0) maxScore += 1;
+
+  // Reduce: has too many digits (probably not a title)
+  if (/\d{3,}/.test(line) && maxScore > 0) maxScore -= 3;
+
+  return Math.max(0, maxScore);
+}
+
+function getCompanyScore(line: string): number {
+  let totalScore = 0;
+  for (const { pattern, weight } of COMPANY_PATTERNS) {
+    if (pattern.test(line)) {
+      totalScore = Math.max(totalScore, weight);
+    }
+  }
+
+  // Reduce: has @ sign (it's an email)
+  if (line.includes('@')) totalScore = 0;
+  // Reduce: too many digits (probably phone or address)
+  const digits = (line.match(/\d/g) || []).length;
+  if (digits > 5) totalScore -= 3;
+
+  return Math.max(0, totalScore);
+}
+
+function getAddressScore(line: string): number {
+  const lower = line.toLowerCase();
+  let score = 0;
+
+  // Check address keywords
+  for (const kw of ADDRESS_KEYWORDS) {
+    const regex = new RegExp(`\\b${kw}\\b`, 'i');
+    if (regex.test(lower)) {
+      score += 3;
+    }
+  }
+
+  // Check city/state names
+  for (const city of CITY_NAMES) {
+    if (lower.includes(city)) {
+      score += 4;
+      break; // One city is enough
+    }
+  }
+
+  // Check for pin/zip code
+  if (PIN_CODE_REGEX.test(line)) score += 4;
+
+  // Check for comma-separated segments (common in addresses)
+  const commaSegments = line.split(',').length;
+  if (commaSegments >= 2 && score > 0) score += 2;
+
+  // Reduce: looks like email or website
+  if (line.includes('@') || /(?:www\.|https?:\/\/)/i.test(line)) score = 0;
+
+  return score;
+}
+
+function getNameScore(line: string, lineIndex: number, totalLines: number): number {
+  const wordCount = line.split(/\s+/).length;
+  const hasDigits = /\d/.test(line);
+  const lineLength = line.length;
+
+  // Immediate disqualifiers
+  if (hasDigits) return 0;
+  if (lineLength < 2 || lineLength > 50) return 0;
+  if (wordCount > 5) return 0;
+  if (line.includes('@')) return 0;
+  if (/(?:www\.|https?:\/\/)/i.test(line)) return 0;
+
+  let score = 5;
+
+  // Boost: has name prefix (Mr., Dr., etc.)
+  if (NAME_PREFIXES.test(line)) score += 5;
+
+  // Boost: 2-3 words (typical name length)
+  if (wordCount >= 2 && wordCount <= 3) score += 3;
+
+  // Boost: appears early in the card (names are usually at the top)
+  if (lineIndex === 0) score += 4;
+  else if (lineIndex === 1) score += 3;
+  else if (lineIndex <= 3) score += 1;
+  else score -= 1;
+
+  // Boost: all words start with uppercase (proper nouns)
+  const words = line.split(/\s+/);
+  const allCapitalized = words.every(w => /^[A-Z]/.test(w));
+  if (allCapitalized) score += 2;
+
+  // Boost: ALL CAPS (some cards print names in uppercase)
+  if (line === line.toUpperCase() && /[A-Z]/.test(line)) score += 1;
+
+  // Reduce: contains special characters common in non-name fields
+  if (/[/:;#@{}()[\]]/.test(line)) score -= 3;
+
+  // Reduce: contains common non-name words
+  if (/\b(?:road|street|floor|building|pvt|ltd|email|phone|tel|fax|mob|web|www)\b/i.test(line)) score -= 5;
+
+  return Math.max(0, score);
+}
+
+// ============================================================
+// PHONE CLASSIFICATION
+// ============================================================
+
+function classifyPhone(contextLine: string, number: string): 'mobile' | 'landline' {
+  // Check explicit labels in the surrounding text
+  if (MOBILE_LABELS.test(contextLine)) return 'mobile';
+  if (LANDLINE_LABELS.test(contextLine)) return 'landline';
+
+  const digits = number.replace(/\D/g, '');
+
+  // Strip country code
+  let localDigits = digits;
+  if (digits.startsWith('91') && digits.length >= 12) {
+    localDigits = digits.slice(2);
+  } else if (digits.startsWith('0') && digits.length >= 11) {
+    localDigits = digits.slice(1);
+  } else if (digits.startsWith('1') && digits.length === 11) {
+    localDigits = digits.slice(1);
+  } else if (digits.startsWith('44') && digits.length >= 12) {
+    localDigits = digits.slice(2);
+  }
+
+  // Indian mobile: 10 digits starting with 6-9
   if (localDigits.length === 10 && /^[6-9]/.test(localDigits)) {
     return 'mobile';
   }
 
-  // Numbers with +91 prefix usually mobile
-  if (number.includes('+91') || number.includes('+1')) {
-    return 'mobile';
-  }
-
-  // Shorter numbers are usually landlines
-  if (localDigits.length <= 8) {
-    return 'landline';
-  }
-
-  // Default to mobile for 10+ digit numbers
-  return localDigits.length >= 10 ? 'mobile' : 'landline';
-}
-
-function extractPhoneNumbers(text: string): string[] {
-  const phones: string[] = [];
-  const matches = text.match(PHONE_REGEX) || [];
-  
-  for (const match of matches) {
-    const digits = match.replace(/\D/g, '');
-    // Only include numbers with 7+ digits (skip short numbers like dates/years)
-    if (digits.length >= 7 && digits.length <= 15) {
-      const cleaned = match.trim();
-      if (!phones.includes(cleaned)) {
-        phones.push(cleaned);
-      }
+  // Indian landline: typically 10-11 digits starting with area code (2-8)
+  // Pattern: STD code (2-4 digits) + number (6-8 digits)
+  if (localDigits.length >= 8 && localDigits.length <= 11 && /^[0-8]/.test(localDigits)) {
+    // If it's exactly 10 digits starting with 2-5, it's likely a landline with STD
+    if (localDigits.length <= 8 || /^[2-5]/.test(localDigits)) {
+      return 'landline';
     }
   }
-  
-  return phones;
+
+  // International with + prefix — usually mobile
+  if (number.includes('+')) return 'mobile';
+
+  // US/Canada: 10 digits → usually mobile
+  if (localDigits.length === 10) return 'mobile';
+
+  // Short numbers → landline
+  if (localDigits.length <= 8) return 'landline';
+
+  return 'mobile'; // default
 }
 
-// --- Main Parser ---
+// ============================================================
+// MAIN PARSER
+// ============================================================
 
 export function parseContactFromText(rawText: string): ContactInfo {
-  const lines = rawText
+  const processed = preprocessOcrText(rawText);
+  const lines = processed
     .split('\n')
     .map(cleanLine)
-    .filter(line => line.length > 0);
+    .filter(line => line.length > 1); // skip empty/single-char lines
 
   const contact: ContactInfo = {
     firstName: '',
@@ -190,172 +458,283 @@ export function parseContactFromText(rawText: string): ContactInfo {
     notes: '',
   };
 
-  // Extract emails
-  EMAIL_REGEX.lastIndex = 0;
-  const emailMatches = rawText.match(EMAIL_REGEX);
-  if (emailMatches && emailMatches.length > 0) {
-    contact.email = emailMatches[0].toLowerCase();
+  if (lines.length === 0) return contact;
+
+  // ---- Score every line for every possible field type ----
+  interface LineAnalysis {
+    line: string;
+    index: number;
+    phoneScore: number;
+    phoneNumbers: string[];
+    emailScore: number;
+    emailValue: string;
+    websiteScore: number;
+    websiteValue: string;
+    titleScore: number;
+    companyScore: number;
+    addressScore: number;
+    nameScore: number;
+    assignedAs: string | null;
   }
 
-  // Extract websites (exclude email domains)
-  const websiteMatches: string[] = [];
-  for (const line of lines) {
-    WEBSITE_REGEX.lastIndex = 0;
-    const matches = line.match(WEBSITE_REGEX) || [];
-    for (const m of matches) {
-      if (!m.includes('@') && !emailMatches?.some(e => m.includes(e))) {
-        websiteMatches.push(m);
-      }
+  const analyses: LineAnalysis[] = lines.map((line, index) => {
+    const phone = getPhoneScore(line);
+    const email = getEmailScore(line);
+    const website = getWebsiteScore(line);
+
+    return {
+      line,
+      index,
+      phoneScore: phone.score,
+      phoneNumbers: phone.numbers,
+      emailScore: email.score,
+      emailValue: email.email,
+      websiteScore: website.score,
+      websiteValue: website.url,
+      titleScore: getTitleScore(line),
+      companyScore: getCompanyScore(line),
+      addressScore: getAddressScore(line),
+      nameScore: getNameScore(line, index, lines.length),
+      assignedAs: null,
+    };
+  });
+
+  // ---- Pass 1: Assign high-confidence fields (email, website, phone) ----
+  for (const a of analyses) {
+    // Email — very distinctive
+    if (a.emailScore >= 8 && !contact.email) {
+      contact.email = a.emailValue;
+      a.assignedAs = 'email';
     }
-  }
-  if (websiteMatches.length > 0) {
-    let url = websiteMatches[0];
-    if (!url.startsWith('http')) {
-      url = 'https://' + url;
+
+    // Website — very distinctive
+    if (a.websiteScore >= 7 && !contact.website && a.assignedAs !== 'email') {
+      contact.website = a.websiteValue;
+      a.assignedAs = 'website';
     }
-    contact.website = url;
-  }
-
-  // Classify each line
-  const usedLines = new Set<number>();
-  const phoneLines: number[] = [];
-  const addressLines: string[] = [];
-  let titleLine = '';
-  let companyLine = '';
-
-  // First pass: Extract phones, emails, websites (definite matches)
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
 
     // Phone numbers
-    if (isPhoneLine(line) && !isEmailLine(line) && !isWebsiteLine(line)) {
-      const phones = extractPhoneNumbers(line);
-      for (const phone of phones) {
-        const type = classifyPhone(line, phone);
+    if (a.phoneScore >= 5 && a.assignedAs === null) {
+      for (const num of a.phoneNumbers) {
+        const type = classifyPhone(a.line, num);
         if (type === 'mobile') {
-          contact.mobiles.push(phone);
+          contact.mobiles.push(num);
         } else {
-          contact.landlines.push(phone);
+          contact.landlines.push(num);
         }
       }
-      phoneLines.push(i);
-      usedLines.add(i);
-    }
-
-    // Email line (already extracted above, just mark)
-    if (isEmailLine(line)) {
-      usedLines.add(i);
-    }
-
-    // Website line
-    if (isWebsiteLine(line) && !isEmailLine(line)) {
-      usedLines.add(i);
+      a.assignedAs = 'phone';
     }
   }
 
-  // Second pass: Identify title, company, address from remaining lines
-  for (let i = 0; i < lines.length; i++) {
-    if (usedLines.has(i)) continue;
-    const line = lines[i];
+  // ---- Pass 2: Assign company and title (need to disambiguate) ----
+  // Find best company line
+  let bestCompanyIdx = -1;
+  let bestCompanyScore = 0;
+  for (const a of analyses) {
+    if (a.assignedAs !== null) continue;
+    if (a.companyScore > bestCompanyScore) {
+      bestCompanyScore = a.companyScore;
+      bestCompanyIdx = a.index;
+    }
+  }
+  if (bestCompanyIdx >= 0 && bestCompanyScore >= 5) {
+    const a = analyses.find(x => x.index === bestCompanyIdx)!;
+    contact.company = a.line;
+    a.assignedAs = 'company';
+  }
 
-    if (!companyLine && isCompanyLine(line)) {
-      companyLine = line;
-      contact.company = line;
-      usedLines.add(i);
-    } else if (!titleLine && isTitleLine(line)) {
-      titleLine = line;
-      contact.title = line;
-      usedLines.add(i);
-    } else if (isAddressLine(line)) {
-      addressLines.push(line);
-      usedLines.add(i);
+  // Find best title line (but not the same as company)
+  let bestTitleIdx = -1;
+  let bestTitleScore = 0;
+  for (const a of analyses) {
+    if (a.assignedAs !== null) continue;
+    if (a.titleScore > bestTitleScore) {
+      bestTitleScore = a.titleScore;
+      bestTitleIdx = a.index;
+    }
+  }
+  if (bestTitleIdx >= 0 && bestTitleScore >= 4) {
+    const a = analyses.find(x => x.index === bestTitleIdx)!;
+    contact.title = a.line;
+    a.assignedAs = 'title';
+  }
+
+  // ---- Pass 3: Address lines ----
+  const addressParts: string[] = [];
+  for (const a of analyses) {
+    if (a.assignedAs !== null) continue;
+    if (a.addressScore >= 4) {
+      addressParts.push(a.line);
+      a.assignedAs = 'address';
+    }
+  }
+  // Also grab adjacent unassigned lines near address lines (address continuation)
+  for (let i = 0; i < analyses.length; i++) {
+    const a = analyses[i];
+    if (a.assignedAs === 'address') {
+      // Check next line — if it's unassigned and could be address continuation
+      const next = analyses[i + 1];
+      if (next && next.assignedAs === null && next.addressScore >= 2) {
+        addressParts.push(next.line);
+        next.assignedAs = 'address';
+      }
+    }
+  }
+  if (addressParts.length > 0) {
+    contact.address = addressParts.join(', ');
+  }
+
+  // ---- Pass 4: Name detection ----
+  // Strategy: Find the best name candidate from remaining unassigned lines
+  // Use email username as a hint if available
+  let emailNameHint = '';
+  if (contact.email) {
+    const username = contact.email.split('@')[0];
+    // Common email patterns: first.last, firstlast, first_last
+    emailNameHint = username.replace(/[._\-\d]/g, ' ').trim().toLowerCase();
+  }
+
+  let bestNameIdx = -1;
+  let bestNameScore = 0;
+  for (const a of analyses) {
+    if (a.assignedAs !== null) continue;
+    let score = a.nameScore;
+
+    // Boost: if line content matches email username pattern
+    if (emailNameHint && emailNameHint.length > 2) {
+      const lineLower = a.line.toLowerCase();
+      const hintWords = emailNameHint.split(/\s+/);
+      for (const hw of hintWords) {
+        if (hw.length > 2 && lineLower.includes(hw)) {
+          score += 4;
+          break;
+        }
+      }
+    }
+
+    if (score > bestNameScore) {
+      bestNameScore = score;
+      bestNameIdx = a.index;
     }
   }
 
-  // Combine address lines
-  if (addressLines.length > 0) {
-    contact.address = addressLines.join(', ');
-  }
+  if (bestNameIdx >= 0 && bestNameScore >= 3) {
+    const a = analyses.find(x => x.index === bestNameIdx)!;
+    let nameLine = a.line;
 
-  // Third pass: Name detection
-  // The name is typically the most prominent text (first unused line or first line)
-  // Heuristic: first 1-3 lines that aren't phone/email/website/title/company/address
-  const candidateNameLines: string[] = [];
-  for (let i = 0; i < Math.min(lines.length, 5); i++) {
-    if (usedLines.has(i)) continue;
-    const line = lines[i];
-    // Name lines are usually short (2-4 words) and don't contain digits
-    const wordCount = line.split(/\s+/).length;
-    const hasDigits = /\d/.test(line);
-    if (wordCount <= 5 && !hasDigits && line.length <= 40) {
-      candidateNameLines.push(line);
-      usedLines.add(i);
-      break; // Usually just one name line
-    }
-  }
+    // Remove prefix for parsing but keep for display
+    nameLine = nameLine.replace(NAME_PREFIXES, '').trim();
 
-  if (candidateNameLines.length > 0) {
-    const nameParts = candidateNameLines[0].split(/\s+/);
-    if (nameParts.length >= 2) {
+    const nameParts = nameLine.split(/\s+/);
+    if (nameParts.length >= 3) {
       contact.firstName = nameParts[0];
       contact.lastName = nameParts.slice(1).join(' ');
+    } else if (nameParts.length === 2) {
+      contact.firstName = nameParts[0];
+      contact.lastName = nameParts[1];
     } else if (nameParts.length === 1) {
       contact.firstName = nameParts[0];
     }
+    a.assignedAs = 'name';
   }
 
-  // Remaining unused lines go to notes
-  const noteLines: string[] = [];
-  for (let i = 0; i < lines.length; i++) {
-    if (!usedLines.has(i)) {
-      const line = lines[i];
-      // Skip very short lines (probably OCR noise)
-      if (line.length > 2) {
-        noteLines.push(line);
+  // ---- Pass 5: Second chance — if no company found, check if any remaining line could be ----
+  if (!contact.company) {
+    for (const a of analyses) {
+      if (a.assignedAs !== null) continue;
+      if (a.companyScore >= 3) {
+        contact.company = a.line;
+        a.assignedAs = 'company';
+        break;
       }
+    }
+  }
+
+  // ---- Pass 6: If no title found, look for a line near the name that might be a title ----
+  if (!contact.title && bestNameIdx >= 0) {
+    // Title often appears right after the name
+    for (let offset of [1, -1, 2]) {
+      const idx = bestNameIdx + offset;
+      if (idx >= 0 && idx < analyses.length) {
+        const a = analyses[idx];
+        if (a.assignedAs === null && a.titleScore >= 2) {
+          contact.title = a.line;
+          a.assignedAs = 'title';
+          break;
+        }
+      }
+    }
+  }
+
+  // ---- Remaining unassigned lines → notes ----
+  const noteLines: string[] = [];
+  for (const a of analyses) {
+    if (a.assignedAs === null && a.line.length > 2) {
+      noteLines.push(a.line);
     }
   }
   if (noteLines.length > 0) {
     contact.notes = noteLines.join(' | ');
   }
 
-  // Deduplicate phone numbers
+  // ---- Dedup phone numbers ----
   contact.mobiles = [...new Set(contact.mobiles)];
   contact.landlines = [...new Set(contact.landlines)];
 
   return contact;
 }
 
-/**
- * Provides incremental parsing feedback as OCR progresses.
- * Extracts whatever can be found from partial text.
- */
+// ============================================================
+// PARTIAL PARSER (for live preview during OCR)
+// ============================================================
+
 export function parsePartialContact(rawText: string): Partial<ContactInfo> {
   const partial: Partial<ContactInfo> = {};
+  const processed = preprocessOcrText(rawText);
 
-  // Try to extract whatever is available
+  // Email
   EMAIL_REGEX.lastIndex = 0;
-  const emailMatch = rawText.match(EMAIL_REGEX);
+  const emailMatch = processed.match(EMAIL_REGEX);
   if (emailMatch) partial.email = emailMatch[0].toLowerCase();
 
-  const phones = extractPhoneNumbers(rawText);
-  if (phones.length > 0) {
-    partial.mobiles = [];
-    partial.landlines = [];
-    for (const phone of phones) {
-      if (classifyPhone(rawText, phone) === 'mobile') {
-        partial.mobiles.push(phone);
-      } else {
-        partial.landlines.push(phone);
-      }
+  // Phones
+  PHONE_REGEX.lastIndex = 0;
+  const phoneMatches = processed.match(PHONE_REGEX) || [];
+  const mobiles: string[] = [];
+  const landlines: string[] = [];
+  for (const m of phoneMatches) {
+    const digits = m.replace(/\D/g, '');
+    if (digits.length >= 7 && digits.length <= 15) {
+      const type = classifyPhone(processed, m.trim());
+      if (type === 'mobile') mobiles.push(m.trim());
+      else landlines.push(m.trim());
     }
   }
+  if (mobiles.length > 0) partial.mobiles = [...new Set(mobiles)];
+  if (landlines.length > 0) partial.landlines = [...new Set(landlines)];
 
+  // Website
   WEBSITE_REGEX.lastIndex = 0;
-  const webMatch = rawText.match(WEBSITE_REGEX);
+  const webMatch = processed.match(WEBSITE_REGEX);
   if (webMatch) {
     const url = webMatch.find(m => !m.includes('@'));
     if (url) partial.website = url.startsWith('http') ? url : 'https://' + url;
+  }
+
+  // Quick name attempt from first few lines
+  const lines = processed.split('\n').map(cleanLine).filter(l => l.length > 2);
+  for (const line of lines.slice(0, 3)) {
+    const words = line.split(/\s+/);
+    const hasDigits = /\d/.test(line);
+    const isEmail = line.includes('@');
+    if (!hasDigits && !isEmail && words.length >= 2 && words.length <= 4 && line.length <= 40) {
+      const cleaned = line.replace(NAME_PREFIXES, '').trim();
+      const parts = cleaned.split(/\s+/);
+      partial.firstName = parts[0];
+      partial.lastName = parts.slice(1).join(' ');
+      break;
+    }
   }
 
   return partial;
