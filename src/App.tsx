@@ -52,9 +52,9 @@ const downloadVCard = (contact: ContactInfo) => {
 
 /**
  * Resize and compress image for sending to Gemini API.
- * Optimized: good quality at reasonable size to minimize token use.
+ * High quality for best OCR accuracy — Gemini handles large images well.
  */
-const compressImageForAPI = (base64Str: string, maxWidth = 1024, maxHeight = 1024): Promise<string> => {
+const compressImageForAPI = (base64Str: string, maxWidth = 1600, maxHeight = 1600): Promise<string> => {
   return new Promise((resolve) => {
     const img = new Image();
     img.src = base64Str;
@@ -83,7 +83,7 @@ const compressImageForAPI = (base64Str: string, maxWidth = 1024, maxHeight = 102
         ctx.imageSmoothingQuality = 'high';
         ctx.drawImage(img, 0, 0, width, height);
       }
-      resolve(canvas.toDataURL('image/jpeg', 0.85));
+      resolve(canvas.toDataURL('image/jpeg', 0.92));
     };
   });
 };
@@ -309,6 +309,7 @@ export default function App() {
   /**
    * PRIMARY: Send images directly to Gemini 2.0 Flash.
    * Gemini handles both OCR and field extraction in one step — best accuracy.
+   * Includes retry logic with exponential backoff and JSON error recovery.
    * Free tier: 1,500 requests/day, 15 RPM.
    */
   const scanWithGemini = async (base64Images: string[], apiKey: string): Promise<ContactInfo> => {
@@ -322,24 +323,36 @@ export default function App() {
       }
     }));
 
-    const prompt = `You are an expert OCR and contact extraction assistant.
-Analyze the provided visiting card image(s) and extract ALL contact details.
+    const prompt = `You are an expert OCR system specialized in reading business/visiting cards with perfect accuracy.
 
-IMPORTANT RULES:
-1. "firstName" and "lastName" must be the PERSON's name, NOT the company/business name.
-2. "company" must be the business/organization name (look for Pvt. Ltd., Inc., LLC, Solutions, etc.).
-3. Categorize phone numbers:
-   - "mobiles": numbers labeled Mobile/Cell/M/WhatsApp, or 10-digit numbers starting with 6-9.
-   - "landlines": numbers labeled Tel/Phone/Office/Fax, or shorter STD numbers.
-4. Extract full postal address including pin/zip code.
-5. If a field is not found, use empty string or empty array.
+INSTRUCTIONS:
+1. Carefully read EVERY piece of text on the card image(s), including small, faint, or stylized text.
+2. The card may contain text in multiple languages (English, Hindi, Marathi, Gujarati, etc.). Extract ALL text regardless of language, but transliterate non-Latin names to English.
+3. If there are multiple images, they are front and back of the SAME card — combine all information.
+
+EXTRACTION RULES:
+- "firstName" + "lastName": The PERSON's name (usually the largest/most prominent text). NEVER put the company name here.
+- "company": The business/organization name. Look for suffixes like Pvt. Ltd., Inc., LLC, LLP, Corp., Solutions, Enterprises, Industries, Group, etc.
+- "title": The person's job title or designation (e.g., Director, Manager, CEO, Proprietor, Partner).
+- "mobiles": Phone numbers labeled Mobile/Cell/M/Mob/WhatsApp, OR Indian 10-digit numbers starting with 6/7/8/9. Include country code if shown (e.g., +91).
+- "landlines": Numbers labeled Tel/Phone/Ph/Office/Fax/Land, OR numbers with STD codes (e.g., 022-XXXXXXXX). Include STD/area code.
+- "email": Full email address.
+- "website": Full URL (include http/https if shown, otherwise just the domain).
+- "address": Complete postal address including building, street, area, city, state, and PIN/ZIP code. Combine address fragments from multiple lines.
+- "notes": Any other useful info: GST number, PAN, social media handles (@twitter, LinkedIn URL), taglines, certifications, or additional details.
+
+QUALITY RULES:
+- Read numbers VERY carefully — do not confuse 0/O, 1/l/I, 5/S, 8/B, 6/G.
+- Preserve exact phone number formatting with hyphens/spaces as shown on card.
+- If a field is not found, use empty string "" or empty array [].
+- Do NOT guess or hallucinate information that is not visible on the card.
 
 Return ONLY a valid JSON object:
 {
   "firstName": "string",
   "lastName": "string",
-  "title": "string (job title/designation)",
-  "company": "string (company/organization name)",
+  "title": "string",
+  "company": "string",
   "landlines": ["string"],
   "mobiles": ["string"],
   "email": "string",
@@ -348,34 +361,84 @@ Return ONLY a valid JSON object:
   "notes": "string"
 }`;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.0-flash',
-      contents: {
-        parts: [
-          { text: prompt },
-          ...imageParts
-        ]
-      },
-      config: {
-        responseMimeType: 'application/json',
+    // Retry logic with exponential backoff
+    const MAX_RETRIES = 2;
+    let lastError: any = null;
+
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        if (attempt > 0) {
+          const delay = Math.pow(2, attempt) * 1000; // 2s, 4s
+          console.log(`Gemini retry attempt ${attempt}, waiting ${delay}ms...`);
+          await new Promise(r => setTimeout(r, delay));
+        }
+
+        // Show partial results to user during analysis
+        setPartialContact({ notes: attempt > 0 ? 'Retrying scan...' : undefined });
+
+        const response = await ai.models.generateContent({
+          model: 'gemini-2.0-flash',
+          contents: {
+            parts: [
+              { text: prompt },
+              ...imageParts
+            ]
+          },
+          config: {
+            responseMimeType: 'application/json',
+          }
+        });
+
+        const text = response.text || '{}';
+        let parsed: any;
+
+        // Robust JSON parsing with error recovery
+        try {
+          parsed = JSON.parse(text);
+        } catch (jsonErr) {
+          console.warn('Gemini returned malformed JSON, attempting recovery...', text.substring(0, 200));
+          // Try to extract JSON from the response text
+          const jsonMatch = text.match(/\{[\s\S]*\}/);
+          if (jsonMatch) {
+            try {
+              parsed = JSON.parse(jsonMatch[0]);
+            } catch {
+              throw new Error('Could not parse Gemini response as JSON');
+            }
+          } else {
+            throw new Error('No JSON found in Gemini response');
+          }
+        }
+
+        const contact: ContactInfo = {
+          firstName: parsed.firstName || '',
+          lastName: parsed.lastName || '',
+          title: parsed.title || '',
+          company: parsed.company || '',
+          email: parsed.email || '',
+          website: parsed.website || '',
+          address: parsed.address || '',
+          notes: parsed.notes || '',
+          landlines: Array.isArray(parsed.landlines) ? parsed.landlines.filter(Boolean) : [],
+          mobiles: Array.isArray(parsed.mobiles) ? parsed.mobiles.filter(Boolean) : [],
+        };
+
+        // Stream partial results to UI
+        setPartialContact(contact);
+
+        return contact;
+      } catch (err: any) {
+        lastError = err;
+        const msg = err.message || '';
+        // Only retry on rate limit errors
+        if ((msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED')) && attempt < MAX_RETRIES) {
+          continue;
+        }
+        throw err;
       }
-    });
+    }
 
-    const text = response.text || '{}';
-    const parsed = JSON.parse(text);
-
-    return {
-      firstName: parsed.firstName || '',
-      lastName: parsed.lastName || '',
-      title: parsed.title || '',
-      company: parsed.company || '',
-      email: parsed.email || '',
-      website: parsed.website || '',
-      address: parsed.address || '',
-      notes: parsed.notes || '',
-      landlines: Array.isArray(parsed.landlines) ? parsed.landlines : [],
-      mobiles: Array.isArray(parsed.mobiles) ? parsed.mobiles : [],
-    };
+    throw lastError;
   };
 
   /**
@@ -786,7 +849,7 @@ Return ONLY a valid JSON object:
       {/* Footer Info */}
       <footer className="p-4 text-center mt-auto">
         <p className="text-[10px] text-stone-400 font-medium uppercase tracking-widest">
-          Powered by Tesseract OCR + Gemini AI • Smart & Private
+          Powered by Gemini 2.0 Flash AI • Smart & Accurate
         </p>
       </footer>
     </div>
