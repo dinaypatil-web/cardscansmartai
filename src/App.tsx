@@ -267,7 +267,13 @@ export default function App() {
     setStep('analyzing');
 
     try {
-      const apiKey = process.env.GEMINI_API_KEY!;
+      // @ts-ignore - Vite environment variable injection
+      const apiKey = (import.meta as any).env?.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
+
+      if (!apiKey || apiKey === "MY_GEMINI_API_KEY" || apiKey.includes("YOUR_API_KEY")) {
+        throw new Error("Gemini API Key is missing. Please set VITE_GEMINI_API_KEY in your environment variables.");
+      }
+
       const ai = new GoogleGenAI({ apiKey });
       const compressedImages = await Promise.all(base64Images.map(img => resizeImage(img)));
 
