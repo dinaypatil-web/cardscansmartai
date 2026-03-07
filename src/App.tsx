@@ -362,8 +362,9 @@ Return ONLY a valid JSON object:
       });
 
       let fullText = "";
-      for await (const chunk of stream) {
-        fullText += chunk.text;
+      // @ts-ignore - response object structure
+      for await (const chunk of stream.stream) {
+        fullText += (chunk.text || "");
 
         // Try to parse partial JSON to show progress
         try {
@@ -466,7 +467,6 @@ Return ONLY a valid JSON object:
           : "Failed to scan the card. Please ensure the image is clear and try again.");
       }
       setStep('review'); // Stay on review so user can see error and retry
-      // setImages([]); // Do NOT clear images so user doesn't have to recapture
     } finally {
       setIsScanning(false);
       setPartialContact(null);
@@ -587,6 +587,16 @@ Return ONLY a valid JSON object:
                       ? 'Capture the back side if it has info.'
                       : 'Review your captures below before processing.'}
                 </p>
+                {error && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="p-2 bg-red-50 border border-red-100 rounded-lg flex items-center gap-2 text-red-600 text-xs mx-4"
+                  >
+                    <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                    <p className="font-medium">{error}</p>
+                  </motion.div>
+                )}
               </div>
 
               <div className="flex flex-col items-center gap-3">
