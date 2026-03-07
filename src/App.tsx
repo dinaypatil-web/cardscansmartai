@@ -165,7 +165,8 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [cooldown, setCooldown] = useState<number>(0);
   const [isCameraReady, setIsCameraReady] = useState(false);
-  const [step, setStep] = useState<'front' | 'back' | 'analyzing' | 'result'>('front');
+  const [step, setStep] = useState<'front' | 'back' | 'review' | 'analyzing' | 'result'>('front');
+  const [showFlash, setShowFlash] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -174,6 +175,8 @@ export default function App() {
   useEffect(() => {
     if ((step === 'front' || step === 'back') && !contact) {
       startCamera();
+    } else {
+      stopCamera();
     }
     return () => stopCamera();
   }, [step, contact]);
@@ -223,7 +226,7 @@ export default function App() {
   };
 
   const captureImage = useCallback(() => {
-    if (videoRef.current && canvasRef.current) {
+    if (videoRef.current && canvasRef.current && !showFlash) {
       const video = videoRef.current;
       const canvas = canvasRef.current;
       canvas.width = video.videoWidth;
@@ -233,24 +236,27 @@ export default function App() {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
         const dataUrl = canvas.toDataURL('image/jpeg');
 
+        // Flash & Sound effect
+        setShowFlash(true);
+        setTimeout(() => setShowFlash(false), 300);
+
         const newImages = [...images, dataUrl];
         setImages(newImages);
 
-        if (step === 'front') {
-          setStep('back');
-        } else {
-          setStep('analyzing');
-          stopCamera();
-          scanCard(newImages);
-        }
+        // Brief delay to "see" the captured image before moving to next step
+        setTimeout(() => {
+          if (step === 'front') {
+            setStep('back');
+          } else {
+            setStep('review');
+          }
+        }, 500);
       }
     }
-  }, [images, step]);
+  }, [images, step, showFlash]);
 
   const skipBackSide = () => {
-    setStep('analyzing');
-    stopCamera();
-    scanCard(images);
+    setStep('review');
   };
 
   const scanCard = async (base64Images: string[], retryCount = 0) => {
@@ -479,7 +485,7 @@ Return ONLY a valid JSON object:
 
       <main className="max-w-xl mx-auto p-3 pb-10">
         <AnimatePresence mode="wait">
-          {(step === 'front' || step === 'back') && !contact ? (
+          {(step === 'front' || step === 'back' || step === 'review') && !contact ? (
             <motion.div
               key="camera"
               initial={{ opacity: 0, y: 20 }}
@@ -487,84 +493,120 @@ Return ONLY a valid JSON object:
               exit={{ opacity: 0, scale: 0.95 }}
               className="space-y-3"
             >
-              <div className="relative aspect-[4/3] sm:aspect-[3/2] max-h-[40vh] sm:max-h-none bg-stone-900 rounded-2xl sm:rounded-3xl overflow-hidden shadow-2xl border-4 border-white">
-                <video
-                  ref={videoRef}
-                  autoPlay
-                  playsInline
-                  className="w-full h-full object-cover"
-                />
+              {(step === 'front' || step === 'back') && (
+                <div className="relative aspect-[4/3] sm:aspect-[3/2] max-h-[40vh] sm:max-h-none bg-stone-900 rounded-2xl sm:rounded-3xl overflow-hidden shadow-2xl border-4 border-white">
+                  <video
+                    ref={videoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    className="w-full h-full object-cover"
+                  />
 
-                {/* Guide Overlay */}
-                <div className="absolute inset-0 border-[40px] border-black/40 pointer-events-none">
-                  <div className="w-full h-full border-2 border-white/50 rounded-lg flex items-center justify-center">
-                    <div className="w-12 h-12 border-t-2 border-l-2 border-white absolute top-4 left-4" />
-                    <div className="w-12 h-12 border-t-2 border-r-2 border-white absolute top-4 right-4" />
-                    <div className="w-12 h-12 border-b-2 border-l-2 border-white absolute bottom-4 left-4" />
-                    <div className="w-12 h-12 border-b-2 border-r-2 border-white absolute bottom-4 right-4" />
+                  {/* Flash Effect */}
+                  <AnimatePresence>
+                    {showFlash && (
+                      <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="absolute inset-0 bg-white z-20"
+                      />
+                    )}
+                  </AnimatePresence>
+
+                  {/* Guide Overlay */}
+                  <div className="absolute inset-0 border-[40px] border-black/40 pointer-events-none">
+                    <div className="w-full h-full border-2 border-white/50 rounded-lg flex items-center justify-center">
+                      <div className="w-12 h-12 border-t-2 border-l-2 border-white absolute top-4 left-4" />
+                      <div className="w-12 h-12 border-t-2 border-r-2 border-white absolute top-4 right-4" />
+                      <div className="w-12 h-12 border-b-2 border-l-2 border-white absolute bottom-4 left-4" />
+                      <div className="w-12 h-12 border-b-2 border-r-2 border-white absolute bottom-4 right-4" />
+                    </div>
                   </div>
+
+                  {!isCameraReady && !error && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-stone-900">
+                      <Loader2 className="w-8 h-8 text-white animate-spin" />
+                    </div>
+                  )}
+
+                  {error && images.length === 0 && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center bg-stone-900/90 p-8 text-center">
+                      <AlertCircle className="w-12 h-12 text-red-500 mb-4" />
+                      <p className="text-white text-sm mb-6">{error}</p>
+                      <button
+                        onClick={startCamera}
+                        className="bg-white text-stone-900 px-6 py-2 rounded-xl font-bold text-sm hover:bg-stone-100 transition-colors flex items-center gap-2"
+                      >
+                        <Camera className="w-4 h-4" />
+                        Retry Camera
+                      </button>
+                    </div>
+                  )}
                 </div>
-
-                {!isCameraReady && !error && (
-                  <div className="absolute inset-0 flex items-center justify-center bg-stone-900">
-                    <Loader2 className="w-8 h-8 text-white animate-spin" />
-                  </div>
-                )}
-
-                {error && images.length === 0 && (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-stone-900/90 p-8 text-center">
-                    <AlertCircle className="w-12 h-12 text-red-500 mb-4" />
-                    <p className="text-white text-sm mb-6">{error}</p>
-                    <button
-                      onClick={startCamera}
-                      className="bg-white text-stone-900 px-6 py-2 rounded-xl font-bold text-sm hover:bg-stone-100 transition-colors flex items-center gap-2"
-                    >
-                      <Camera className="w-4 h-4" />
-                      Retry Camera
-                    </button>
-                  </div>
-                )}
-              </div>
+              )}
 
               <div className="text-center space-y-1">
-                <h2 className="text-base font-semibold">
-                  {step === 'front' ? 'Capture Front Side' : 'Capture Back Side'}
-                </h2>
+                {step === 'review' ? (
+                  <h2 className="text-base font-semibold text-emerald-600 flex items-center justify-center gap-2">
+                    <Check className="w-5 h-5" />
+                    Captures Ready
+                  </h2>
+                ) : (
+                  <h2 className="text-base font-semibold">
+                    {step === 'front' ? 'Capture Front Side' : 'Capture Back Side'}
+                  </h2>
+                )}
                 <p className="text-stone-500 text-xs">
                   {step === 'front'
                     ? 'Position the front of the card within the frame.'
-                    : 'Capture the back side if it has info.'}
+                    : step === 'back'
+                      ? 'Capture the back side if it has info.'
+                      : 'Review your captures below before processing.'}
                 </p>
               </div>
 
               <div className="flex flex-col items-center gap-3">
-                {cooldown > 0 ? (
-                  <div className="flex flex-col items-center gap-3">
-                    <div className="w-14 h-14 bg-stone-100 rounded-full flex items-center justify-center border-4 border-stone-200">
-                      <span className="text-stone-400 font-bold">{cooldown}s</span>
-                    </div>
-                    <p className="text-[10px] text-stone-400 font-bold uppercase tracking-widest">Cooling down...</p>
-                  </div>
+                {step === 'review' ? (
+                  <button
+                    onClick={() => scanCard(images)}
+                    className="w-full bg-emerald-600 text-white py-4 rounded-2xl font-bold shadow-lg shadow-emerald-100 hover:bg-emerald-700 active:scale-[0.98] transition-all flex items-center justify-center gap-2"
+                  >
+                    <ScanLine className="w-5 h-5" />
+                    Process Visiting Card
+                  </button>
                 ) : (
-                  <button
-                    onClick={captureImage}
-                    disabled={!isCameraReady}
-                    className="group relative w-14 h-14 bg-white rounded-full flex items-center justify-center shadow-xl border-4 border-stone-100 active:scale-95 transition-transform disabled:opacity-50"
-                  >
-                    <div className="w-10 h-10 bg-emerald-600 rounded-full flex items-center justify-center group-hover:bg-emerald-500 transition-colors">
-                      <Camera className="text-white w-5 h-5" />
-                    </div>
-                  </button>
-                )}
+                  <>
+                    {cooldown > 0 ? (
+                      <div className="flex flex-col items-center gap-3">
+                        <div className="w-14 h-14 bg-stone-100 rounded-full flex items-center justify-center border-4 border-stone-200">
+                          <span className="text-stone-400 font-bold">{cooldown}s</span>
+                        </div>
+                        <p className="text-[10px] text-stone-400 font-bold uppercase tracking-widest">Cooling down...</p>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={captureImage}
+                        disabled={!isCameraReady}
+                        className="group relative w-14 h-14 bg-white rounded-full flex items-center justify-center shadow-xl border-4 border-stone-100 active:scale-95 transition-transform disabled:opacity-50"
+                      >
+                        <div className="w-10 h-10 bg-emerald-600 rounded-full flex items-center justify-center group-hover:bg-emerald-500 transition-colors">
+                          <Camera className="text-white w-5 h-5" />
+                        </div>
+                      </button>
+                    )}
 
-                {step === 'back' && (
-                  <button
-                    onClick={skipBackSide}
-                    className="text-stone-400 hover:text-stone-600 font-bold text-sm uppercase tracking-widest flex items-center gap-2"
-                  >
-                    Skip Back Side
-                    <X className="w-4 h-4" />
-                  </button>
+                    {step === 'back' && (
+                      <button
+                        onClick={skipBackSide}
+                        className="text-stone-400 hover:text-stone-600 font-bold text-sm uppercase tracking-widest flex items-center gap-2"
+                      >
+                        Skip Back Side
+                        <X className="w-4 h-4" />
+                      </button>
+                    )}
+                  </>
                 )}
               </div>
 
@@ -593,6 +635,34 @@ Return ONLY a valid JSON object:
                   </div>
                 </div>
               </div>
+
+              {/* Captured Images Preview - NEW: Shown below tips */}
+              {images.length > 0 && (
+                <div className="space-y-3 pt-2">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-stone-400 px-1">Captured Sides</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    {images.map((img, idx) => (
+                      <motion.div
+                        key={idx}
+                        initial={{ opacity: 0, scale: 0.9 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        className="relative aspect-[3/2] bg-stone-200 rounded-xl overflow-hidden shadow-sm border-2 border-white"
+                      >
+                        <img src={img} alt={`Captured side ${idx + 1}`} className="w-full h-full object-cover" />
+                        <div className="absolute top-2 left-2 bg-stone-900/60 text-white text-[8px] px-1.5 py-0.5 rounded-md backdrop-blur-sm font-bold uppercase">
+                          {idx === 0 ? 'Front' : 'Back'}
+                        </div>
+                      </motion.div>
+                    ))}
+                    {images.length === 1 && step === 'back' && (
+                      <div className="aspect-[3/2] bg-stone-100 rounded-xl border-2 border-dashed border-stone-200 flex flex-col items-center justify-center text-stone-400 p-4 text-center">
+                        <UserPlus className="w-5 h-5 mb-1 opacity-50" />
+                        <p className="text-[9px] font-medium leading-tight">Awaiting Back Side<br />(optional)</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </motion.div>
           ) : step === 'analyzing' ? (
             <motion.div
