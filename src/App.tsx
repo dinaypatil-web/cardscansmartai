@@ -260,181 +260,11 @@ export default function App() {
     setStep('analyzing');
 
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
+      const apiKey = process.env.GEMINI_API_KEY!;
+      const ai = new GoogleGenAI({ apiKey });
       const compressedImages = await Promise.all(base64Images.map(img => resizeImage(img)));
 
-      const prompt = `Extract contact info from these business card images. Return JSON.`;
-
-      const imageParts = compressedImages.map(img => ({
-        inlineData: {
-          mimeType: "image/jpeg",
-          data: img.split(',')[1]
-        }
-      }));
-
-      const stream = await ai.models.generateContentStream({
-        model: "gemini-3-flash-preview",
-        contents: {
-          parts: [
-            { text: prompt },
-            ...imageParts
-          ]
-        },
-        config: {
-          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              firstName: { type: Type.STRING },
-              lastName: { type: Type.STRING },
-              title: { type: Type.STRING },
-              company: { type: Type.STRING },
-              landlines: { type: Type.ARRAY, items: { type: Type.STRING } },
-              mobiles: { type: Type.ARRAY, items: { type: Type.STRING } },
-              email: { type: Type.STRING },
-              website: { type: Type.STRING },
-              address: { type: Type.STRING },
-              notes: { type: Type.STRING }
-            }
-          }
-        }
-      });
-
-      let fullText = "";
-      for await (const chunk of stream) {
-        fullText += chunk.text;
-
-        // Try to parse partial JSON to show progress
-        try {
-          // Very basic partial JSON parsing attempt
-          // We look for completed key-value pairs
-          const cleaned = fullText.trim();
-          if (cleaned.startsWith('{')) {
-            // Find the last completed property
-            // This is a heuristic: find "key": "value" or "key": ["val"]
-            const result: any = {};
-
-            const fields = ['firstName', 'lastName', 'title', 'company', 'email', 'website', 'address', 'notes'];
-            fields.forEach(field => {
-              const regex = new RegExp(`"${field}"\\s*:\\s*"([^"]*)"`, 'g');
-              const match = [...cleaned.matchAll(regex)].pop();
-              if (match) result[field] = match[1];
-            });
-
-            // Handle arrays
-            ['landlines', 'mobiles'].forEach(field => {
-              const regex = new RegExp(`"${field}"\\s*:\\s*\\[([^\\]]*)\\]`, 'g');
-              const match = [...cleaned.matchAll(regex)].pop();
-              if (match) {
-                try {
-                  result[field] = JSON.parse(`[${match[1]}]`);
-                } catch {
-                  // If array is not fully valid yet, split by comma and clean
-                  result[field] = match[1].split(',').map(s => s.trim().replace(/"/g, '')).filter(Boolean);
-                }
-              }
-            });
-
-            if (Object.keys(result).length > 0) {
-              setPartialContact(prev => ({ ...prev, ...result }));
-            }
-          }
-        } catch (e) {
-          // Ignore partial parse errors
-        }
-      }
-
-      const finalResult = JSON.parse(fullText || "{}");
-
-      // Check if we got ANY useful information
-      const hasInfo = finalResult.firstName ||
-        finalResult.lastName ||
-        finalResult.company ||
-        finalResult.email ||
-        (finalResult.mobiles && finalResult.mobiles.length > 0) ||
-        (finalResult.landlines && finalResult.landlines.length > 0);
-
-      if (hasInfo) {
-        const sanitizedContact: ContactInfo = {
-          firstName: finalResult.firstName || "",
-          lastName: finalResult.lastName || "",
-          title: finalResult.title || "",
-          company: finalResult.company || "",
-          email: finalResult.email || "",
-          website: finalResult.website || "",
-          address: finalResult.address || "",
-          notes: finalResult.notes || "",
-          landlines: Array.isArray(finalResult.landlines) ? finalResult.landlines : [],
-          mobiles: Array.isArray(finalResult.mobiles) ? finalResult.mobiles : []
-        };
-
-        // If no name but has company, use company as a fallback for display if needed
-        // but the UI handles empty names gracefully.
-
-        setContact(sanitizedContact);
-        setStep('result');
-        confetti({
-          particleCount: 100,
-          spread: 70,
-          origin: { y: 0.6 },
-          colors: ['#10b981', '#3b82f6', '#f59e0b']
-        });
-      } else {
-        throw new Error("Could not extract any contact information from the card. Please ensure the card is clearly visible and well-lit.");
-      }
-    } catch (err: any) {
-      console.error("Scanning error:", err);
-      const errorMessage = err.message || JSON.stringify(err);
-
-      if (retryCount < 3 && (
-        errorMessage.includes('xhr error') ||
-        errorMessage.includes('500') ||
-        errorMessage.includes('fetch') ||
-        errorMessage.includes('Rpc failed')
-      ) && !errorMessage.includes('429') && !errorMessage.includes('RESOURCE_EXHAUSTED')) {
-        await new Promise(resolve => setTimeout(resolve, 1000 * (retryCount + 1)));
-        return scanCard(base64Images, retryCount + 1);
-      }
-
-      if (errorMessage.includes('429') || errorMessage.includes('RESOURCE_EXHAUSTED')) {
-        setError("API Quota Exceeded. The free tier limit has been reached. Please wait a moment before trying again.");
-        setCooldown(60); // 60 second cooldown for 429
-      } else if (errorMessage.includes("extract any contact information")) {
-        setError(errorMessage);
-      } else {
-        setError(errorMessage.includes('Rpc failed')
-          ? "The AI service is currently busy. Please try again."
-          : "Failed to scan the card. Please ensure the image is clear and try again.");
-      }
-      setStep('front');
-      setImages([]);
-    } finally {
-      setIsScanning(false);
-      setPartialContact(null);
-    }
-  };
-
-<<<<<<< HEAD
-=======
-  /**
-   * PRIMARY: Send images directly to Gemini 2.0 Flash.
-   * Gemini handles both OCR and field extraction in one step — best accuracy.
-   * Includes retry logic with exponential backoff and JSON error recovery.
-   * Free tier: 1,500 requests/day, 15 RPM.
-   */
-  const scanWithGemini = async (base64Images: string[], apiKey: string): Promise<ContactInfo> => {
-    const ai = new GoogleGenAI({ apiKey });
-    const compressed = await Promise.all(base64Images.map(img => compressImageForAPI(img)));
-
-    const imageParts = compressed.map(img => ({
-      inlineData: {
-        mimeType: "image/jpeg" as const,
-        data: img.split(',')[1]
-      }
-    }));
-
-    const prompt = `You are an expert OCR system specialized in reading business/visiting cards with 100% accuracy.
+      const prompt = `You are an expert OCR system specialized in reading business/visiting cards with 100% accuracy.
 
 INSTRUCTIONS:
 1. Carefully read EVERY piece of text on the card image(s), including small, faint, or stylized text.
@@ -473,113 +303,147 @@ Return ONLY a valid JSON object:
   "notes": "string"
 }`;
 
-    // Retry logic with exponential backoff
-    const MAX_RETRIES = 2;
-    let lastError: any = null;
-
-    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-      try {
-        if (attempt > 0) {
-          const delay = Math.pow(2, attempt) * 1000; // 2s, 4s
-          console.log(`Gemini retry attempt ${attempt}, waiting ${delay}ms...`);
-          await new Promise(r => setTimeout(r, delay));
+      const imageParts = compressedImages.map(img => ({
+        inlineData: {
+          mimeType: "image/jpeg" as const,
+          data: img.split(',')[1]
         }
+      }));
 
-        // Show partial results to user during analysis
-        setPartialContact({ notes: attempt > 0 ? 'Retrying scan...' : undefined });
-
-        const response = await ai.models.generateContent({
-          model: 'gemini-2.0-flash',
-          contents: {
-            parts: [
-              { text: prompt },
-              ...imageParts
-            ]
-          },
-          config: {
-            responseMimeType: 'application/json',
-          }
-        });
-
-        const text = response.text || '{}';
-        let parsed: any;
-
-        // Robust JSON parsing with error recovery
-        try {
-          parsed = JSON.parse(text);
-        } catch (jsonErr) {
-          console.warn('Gemini returned malformed JSON, attempting recovery...', text.substring(0, 200));
-          // Try to extract JSON from the response text
-          const jsonMatch = text.match(/\{[\s\S]*\}/);
-          if (jsonMatch) {
-            try {
-              parsed = JSON.parse(jsonMatch[0]);
-            } catch {
-              throw new Error('Could not parse Gemini response as JSON');
+      const stream = await ai.models.generateContentStream({
+        model: "gemini-2.0-flash",
+        contents: {
+          parts: [
+            { text: prompt },
+            ...imageParts
+          ]
+        },
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              firstName: { type: Type.STRING },
+              lastName: { type: Type.STRING },
+              title: { type: Type.STRING },
+              company: { type: Type.STRING },
+              landlines: { type: Type.ARRAY, items: { type: Type.STRING } },
+              mobiles: { type: Type.ARRAY, items: { type: Type.STRING } },
+              email: { type: Type.STRING },
+              website: { type: Type.STRING },
+              address: { type: Type.STRING },
+              notes: { type: Type.STRING }
             }
-          } else {
-            throw new Error('No JSON found in Gemini response');
-          }
-        }
-
-        const contact: ContactInfo = {
-          firstName: parsed.firstName || '',
-          lastName: parsed.lastName || '',
-          title: parsed.title || '',
-          company: parsed.company || '',
-          email: parsed.email || '',
-          website: parsed.website || '',
-          address: parsed.address || '',
-          notes: parsed.notes || '',
-          landlines: Array.isArray(parsed.landlines) ? parsed.landlines.filter(Boolean) : [],
-          mobiles: Array.isArray(parsed.mobiles) ? parsed.mobiles.filter(Boolean) : [],
-        };
-
-        // Stream partial results to UI
-        setPartialContact(contact);
-
-        return contact;
-      } catch (err: any) {
-        lastError = err;
-        const msg = err.message || '';
-        // Only retry on rate limit errors
-        if ((msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED')) && attempt < MAX_RETRIES) {
-          continue;
-        }
-        throw err;
-      }
-    }
-
-    throw lastError;
-  };
-
-  /**
-   * FALLBACK: Tesseract.js local OCR + regex parser.
-   * Used when Gemini API is unavailable or rate-limited.
-   */
-  const scanWithTesseract = async (base64Images: string[]): Promise<ContactInfo> => {
-    const processedImages = await Promise.all(base64Images.map(img => preprocessImageForOCR(img)));
-    let allText = '';
-
-    for (const img of processedImages) {
-      const result = await Tesseract.recognize(img, 'eng', {
-        logger: (info: any) => {
-          if (info.status === 'recognizing text' && info.progress > 0.3 && allText) {
-            const partial = parsePartialContact(allText);
-            setPartialContact(prev => ({ ...prev, ...partial }));
           }
         }
       });
-      allText += result.data.text + '\n';
-      const partial = parsePartialContact(allText);
-      setPartialContact(prev => ({ ...prev, ...partial }));
+
+      let fullText = "";
+      for await (const chunk of stream) {
+        fullText += chunk.text;
+
+        // Try to parse partial JSON to show progress
+        try {
+          const cleaned = fullText.trim();
+          if (cleaned.startsWith('{')) {
+            const result: any = {};
+            const fields = ['firstName', 'lastName', 'title', 'company', 'email', 'website', 'address', 'notes'];
+            fields.forEach(field => {
+              const regex = new RegExp(`"${field}"\\s*:\\s*"([^"]*)"`, 'g');
+              const match = [...cleaned.matchAll(regex)].pop();
+              if (match) result[field] = match[1];
+            });
+
+            ['landlines', 'mobiles'].forEach(field => {
+              const regex = new RegExp(`"${field}"\\s*:\\s*\\[([^\\]]*)\\]`, 'g');
+              const match = [...cleaned.matchAll(regex)].pop();
+              if (match) {
+                try {
+                  result[field] = JSON.parse(`[${match[1]}]`);
+                } catch {
+                  result[field] = match[1].split(',').map(s => s.trim().replace(/"/u, '').replace(/"/u, '')).filter(Boolean);
+                }
+              }
+            });
+
+            if (Object.keys(result).length > 0) {
+              setPartialContact(prev => ({ ...prev, ...result }));
+            }
+          }
+        } catch (e) {
+          // Ignore partial parse errors
+        }
+      }
+
+      const finalResult = JSON.parse(fullText || "{}");
+
+      // Check if we got ANY useful information
+      const hasInfo = finalResult.firstName ||
+        finalResult.lastName ||
+        finalResult.company ||
+        finalResult.email ||
+        (finalResult.mobiles && finalResult.mobiles.length > 0) ||
+        (finalResult.landlines && finalResult.landlines.length > 0);
+
+      if (hasInfo) {
+        const sanitizedContact: ContactInfo = {
+          firstName: finalResult.firstName || "",
+          lastName: finalResult.lastName || "",
+          title: finalResult.title || "",
+          company: finalResult.company || "",
+          email: finalResult.email || "",
+          website: finalResult.website || "",
+          address: finalResult.address || "",
+          notes: finalResult.notes || "",
+          landlines: Array.isArray(finalResult.landlines) ? finalResult.landlines.filter(Boolean) : [],
+          mobiles: Array.isArray(finalResult.mobiles) ? finalResult.mobiles.filter(Boolean) : []
+        };
+
+        setContact(sanitizedContact);
+        setStep('result');
+        confetti({
+          particleCount: 100,
+          spread: 70,
+          origin: { y: 0.6 },
+          colors: ['#10b981', '#3b82f6', '#f59e0b']
+        });
+      } else {
+        throw new Error("Could not extract any contact information from the card. Please ensure the card is clearly visible and well-lit.");
+      }
+    } catch (err: any) {
+      console.error("Scanning error:", err);
+      const errorMessage = err.message || JSON.stringify(err);
+
+      if (retryCount < 2 && (
+        errorMessage.includes('xhr error') ||
+        errorMessage.includes('500') ||
+        errorMessage.includes('fetch') ||
+        errorMessage.includes('Rpc failed') ||
+        errorMessage.includes('429') ||
+        errorMessage.includes('RESOURCE_EXHAUSTED')
+      )) {
+        const delay = Math.pow(2, retryCount + 1) * 1000;
+        await new Promise(resolve => setTimeout(resolve, delay));
+        return scanCard(base64Images, retryCount + 1);
+      }
+
+      if (errorMessage.includes('429') || errorMessage.includes('RESOURCE_EXHAUSTED')) {
+        setError("API Quota Exceeded. The free tier limit has been reached. Please wait a moment before trying again.");
+        setCooldown(60);
+      } else if (errorMessage.includes("extract any contact information")) {
+        setError(errorMessage);
+      } else {
+        setError(errorMessage.includes('Rpc failed')
+          ? "The AI service is currently busy. Please try again."
+          : "Failed to scan the card. Please ensure the image is clear and try again.");
+      }
+      setStep('front');
+      setImages([]);
+    } finally {
+      setIsScanning(false);
+      setPartialContact(null);
     }
-
-    console.log('Tesseract OCR text:', allText);
-    return parseContactFromText(allText);
   };
-
->>>>>>> 57bd160 (Improve OCR accuracy, field categorization, and image preprocessing for business card scanning)
   const reset = () => {
     setImages([]);
     setContact(null);
