@@ -260,6 +260,7 @@ export default function App() {
   };
 
   const scanCard = async (base64Images: string[], retryCount = 0) => {
+    if (isScanning && retryCount === 0) return; // Guard against multiple clicks
     setIsScanning(true);
     setError(null);
     setPartialContact({});
@@ -365,9 +366,14 @@ Return ONLY a valid JSON object:
               const match = [...cleaned.matchAll(regex)].pop();
               if (match) {
                 try {
-                  result[field] = JSON.parse(`[${match[1]}]`);
+                  const val = match[1].trim();
+                  if (val === '') {
+                    result[field] = [];
+                  } else {
+                    result[field] = val.split(',').map(s => s.trim().replace(/^"/, '').replace(/"$/, '').replace(/^'/, '').replace(/'$/, '')).filter(Boolean);
+                  }
                 } catch {
-                  result[field] = match[1].split(',').map(s => s.trim().replace(/"/u, '').replace(/"/u, '')).filter(Boolean);
+                  // Fallback
                 }
               }
             });
@@ -681,11 +687,15 @@ Return ONLY a valid JSON object:
                     Extracting Data...
                   </p>
 
-                  <div className="h-8 w-3/4 bg-stone-100 rounded-lg animate-pulse">
-                    {partialContact?.firstName && (
+                  <div className="h-8 w-3/4 bg-stone-100 rounded-lg overflow-hidden flex items-center">
+                    {partialContact?.firstName ? (
                       <span className="px-1 text-2xl font-bold tracking-tight text-stone-900">
                         {partialContact.firstName} {partialContact.lastName || ''}
                       </span>
+                    ) : (
+                      <div className="w-full h-full bg-stone-100 animate-pulse flex items-center px-3">
+                        <span className="text-stone-300 text-sm font-medium">Waiting for AI...</span>
+                      </div>
                     )}
                   </div>
 
