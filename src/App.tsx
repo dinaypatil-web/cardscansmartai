@@ -43,7 +43,7 @@ const generateVCard = (contact: ContactInfo): string => {
     `NOTE:${contact.notes ? contact.notes + ' | ' : ''}Scanned with CardScan AI on ${new Date().toLocaleDateString()}`,
     'END:VCARD'
   ].filter(Boolean).join('\n');
-  
+
   return vcard;
 };
 
@@ -96,6 +96,65 @@ const resizeImage = (base64Str: string, maxWidth = 800, maxHeight = 800): Promis
   });
 };
 
+/**
+ * Preprocess image for Tesseract.js fallback OCR.
+ * Grayscale + adaptive thresholding for better text extraction.
+ */
+const preprocessImageForOCR = (base64Str: string, maxWidth = 1600, maxHeight = 1600): Promise<string> => {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.src = base64Str;
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      let width = img.width;
+      let height = img.height;
+
+      if (width > height) {
+        if (width > maxWidth) { height *= maxWidth / width; width = maxWidth; }
+      } else {
+        if (height > maxHeight) { width *= maxHeight / height; height = maxHeight; }
+      }
+
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(img, 0, 0, width, height);
+
+        const imageData = ctx.getImageData(0, 0, width, height);
+        const data = imageData.data;
+
+        // Grayscale + Denoise + Contrast Stretch + Adaptive Thresholding (Simple)
+        let min = 255, max = 0;
+        for (let i = 0; i < data.length; i += 4) {
+          // Weighted grayscale for better contrast
+          const gray = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+          data[i] = data[i + 1] = data[i + 2] = gray;
+          if (gray < min) min = gray;
+          if (gray > max) max = gray;
+        }
+
+        const range = max - min || 1;
+        const threshold = min + (range * 0.45); // Approximate adaptive threshold
+
+        for (let i = 0; i < data.length; i += 4) {
+          // Contrast stretch
+          let val = ((data[i] - min) / range) * 255;
+
+          // Simple Binarization (Threshholding) for Tesseract
+          // We provide a slight gradient for "soft" binarization which Tesseract often likes better than pure salt/pepper
+          val = val > threshold ? 255 : Math.max(0, val - 20);
+
+          data[i] = data[i + 1] = data[i + 2] = val;
+        }
+        ctx.putImageData(imageData, 0, 0);
+      }
+      resolve(canvas.toDataURL('image/png'));
+    };
+  });
+};
 // --- Components ---
 
 export default function App() {
@@ -107,7 +166,7 @@ export default function App() {
   const [cooldown, setCooldown] = useState<number>(0);
   const [isCameraReady, setIsCameraReady] = useState(false);
   const [step, setStep] = useState<'front' | 'back' | 'analyzing' | 'result'>('front');
-  
+
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -133,12 +192,12 @@ export default function App() {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         throw new Error("Your browser does not support camera access.");
       }
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { 
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
           facingMode: 'environment',
           width: { ideal: 1920 },
           height: { ideal: 1080 }
-        } 
+        }
       });
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
@@ -173,10 +232,10 @@ export default function App() {
       if (ctx) {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
         const dataUrl = canvas.toDataURL('image/jpeg');
-        
+
         const newImages = [...images, dataUrl];
         setImages(newImages);
-        
+
         if (step === 'front') {
           setStep('back');
         } else {
@@ -199,13 +258,13 @@ export default function App() {
     setError(null);
     setPartialContact({});
     setStep('analyzing');
-    
+
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
       const compressedImages = await Promise.all(base64Images.map(img => resizeImage(img)));
-      
+
       const prompt = `Extract contact info from these business card images. Return JSON.`;
-      
+
       const imageParts = compressedImages.map(img => ({
         inlineData: {
           mimeType: "image/jpeg",
@@ -245,7 +304,7 @@ export default function App() {
       let fullText = "";
       for await (const chunk of stream) {
         fullText += chunk.text;
-        
+
         // Try to parse partial JSON to show progress
         try {
           // Very basic partial JSON parsing attempt
@@ -255,7 +314,7 @@ export default function App() {
             // Find the last completed property
             // This is a heuristic: find "key": "value" or "key": ["val"]
             const result: any = {};
-            
+
             const fields = ['firstName', 'lastName', 'title', 'company', 'email', 'website', 'address', 'notes'];
             fields.forEach(field => {
               const regex = new RegExp(`"${field}"\\s*:\\s*"([^"]*)"`, 'g');
@@ -287,14 +346,14 @@ export default function App() {
       }
 
       const finalResult = JSON.parse(fullText || "{}");
-      
+
       // Check if we got ANY useful information
-      const hasInfo = finalResult.firstName || 
-                      finalResult.lastName || 
-                      finalResult.company || 
-                      finalResult.email || 
-                      (finalResult.mobiles && finalResult.mobiles.length > 0) ||
-                      (finalResult.landlines && finalResult.landlines.length > 0);
+      const hasInfo = finalResult.firstName ||
+        finalResult.lastName ||
+        finalResult.company ||
+        finalResult.email ||
+        (finalResult.mobiles && finalResult.mobiles.length > 0) ||
+        (finalResult.landlines && finalResult.landlines.length > 0);
 
       if (hasInfo) {
         const sanitizedContact: ContactInfo = {
@@ -309,10 +368,10 @@ export default function App() {
           landlines: Array.isArray(finalResult.landlines) ? finalResult.landlines : [],
           mobiles: Array.isArray(finalResult.mobiles) ? finalResult.mobiles : []
         };
-        
+
         // If no name but has company, use company as a fallback for display if needed
         // but the UI handles empty names gracefully.
-        
+
         setContact(sanitizedContact);
         setStep('result');
         confetti({
@@ -327,10 +386,10 @@ export default function App() {
     } catch (err: any) {
       console.error("Scanning error:", err);
       const errorMessage = err.message || JSON.stringify(err);
-      
+
       if (retryCount < 3 && (
-        errorMessage.includes('xhr error') || 
-        errorMessage.includes('500') || 
+        errorMessage.includes('xhr error') ||
+        errorMessage.includes('500') ||
         errorMessage.includes('fetch') ||
         errorMessage.includes('Rpc failed')
       ) && !errorMessage.includes('429') && !errorMessage.includes('RESOURCE_EXHAUSTED')) {
@@ -344,11 +403,11 @@ export default function App() {
       } else if (errorMessage.includes("extract any contact information")) {
         setError(errorMessage);
       } else {
-        setError(errorMessage.includes('Rpc failed') 
-          ? "The AI service is currently busy. Please try again." 
+        setError(errorMessage.includes('Rpc failed')
+          ? "The AI service is currently busy. Please try again."
           : "Failed to scan the card. Please ensure the image is clear and try again.");
       }
-      setStep('front'); 
+      setStep('front');
       setImages([]);
     } finally {
       setIsScanning(false);
@@ -356,6 +415,171 @@ export default function App() {
     }
   };
 
+<<<<<<< HEAD
+=======
+  /**
+   * PRIMARY: Send images directly to Gemini 2.0 Flash.
+   * Gemini handles both OCR and field extraction in one step — best accuracy.
+   * Includes retry logic with exponential backoff and JSON error recovery.
+   * Free tier: 1,500 requests/day, 15 RPM.
+   */
+  const scanWithGemini = async (base64Images: string[], apiKey: string): Promise<ContactInfo> => {
+    const ai = new GoogleGenAI({ apiKey });
+    const compressed = await Promise.all(base64Images.map(img => compressImageForAPI(img)));
+
+    const imageParts = compressed.map(img => ({
+      inlineData: {
+        mimeType: "image/jpeg" as const,
+        data: img.split(',')[1]
+      }
+    }));
+
+    const prompt = `You are an expert OCR system specialized in reading business/visiting cards with 100% accuracy.
+
+INSTRUCTIONS:
+1. Carefully read EVERY piece of text on the card image(s), including small, faint, or stylized text.
+2. The card may contain text in multiple languages (English, Hindi, Marathi, Gujarati, etc.). Extract ALL text regardless of language. If a name is in a non-Latin script, provide the Latin transliteration if possible, but prioritize accuracy.
+3. If there are multiple images, they represent the front and back of the SAME card — combine all information intelligently.
+4. Distinguish between brand/company names and personal names. If a person's name is also part of the company name (e.g., "John Doe Plumbing"), "John Doe" is the name and "John Doe Plumbing" is the company.
+
+EXTRACTION RULES:
+- "firstName" + "lastName": The PERSON's name. Look for honorifics (Mr., Dr., Adv.) as hints.
+- "company": The legal or brand name of the business. Look for suffixes like Pvt. Ltd., LLC, Inc., etc.
+- "title": Job title or designation. Be precise (e.g., "Founder & CEO" rather than just "CEO").
+- "mobiles": Primarily for personal/mobile numbers. Look for "M:", "Mob:", or 10-digit Indian numbers starting with 6-9.
+- "landlines": Office, desk, or fax numbers. Look for "T:", "Ph:", "Off:", or numbers with area/STD codes.
+- "email": Comprehensive extraction. Look for "@" symbol.
+- "website": Full URL or domain name.
+- "address": Complete postal address. Combine all related fragments (Building, Street, Area, City, State, PIN).
+- "notes": Extract GSTIN, PAN, Udyam numbers, social media handles (@handle), slogans/taglines, or any other professional certifications mentioned.
+
+QUALITY RULES:
+- NEVER confuse '0' (zero) with 'O' (letter) in phone numbers or IDs.
+- Preserve exact formatting for IDs like GST/PAN.
+- If a field is truly missing, return "" or [].
+- DO NOT hallucinate. If text is illegible, leave the field empty.
+
+Return ONLY a valid JSON object:
+{
+  "firstName": "string",
+  "lastName": "string",
+  "title": "string",
+  "company": "string",
+  "landlines": ["string"],
+  "mobiles": ["string"],
+  "email": "string",
+  "website": "string",
+  "address": "string",
+  "notes": "string"
+}`;
+
+    // Retry logic with exponential backoff
+    const MAX_RETRIES = 2;
+    let lastError: any = null;
+
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        if (attempt > 0) {
+          const delay = Math.pow(2, attempt) * 1000; // 2s, 4s
+          console.log(`Gemini retry attempt ${attempt}, waiting ${delay}ms...`);
+          await new Promise(r => setTimeout(r, delay));
+        }
+
+        // Show partial results to user during analysis
+        setPartialContact({ notes: attempt > 0 ? 'Retrying scan...' : undefined });
+
+        const response = await ai.models.generateContent({
+          model: 'gemini-2.0-flash',
+          contents: {
+            parts: [
+              { text: prompt },
+              ...imageParts
+            ]
+          },
+          config: {
+            responseMimeType: 'application/json',
+          }
+        });
+
+        const text = response.text || '{}';
+        let parsed: any;
+
+        // Robust JSON parsing with error recovery
+        try {
+          parsed = JSON.parse(text);
+        } catch (jsonErr) {
+          console.warn('Gemini returned malformed JSON, attempting recovery...', text.substring(0, 200));
+          // Try to extract JSON from the response text
+          const jsonMatch = text.match(/\{[\s\S]*\}/);
+          if (jsonMatch) {
+            try {
+              parsed = JSON.parse(jsonMatch[0]);
+            } catch {
+              throw new Error('Could not parse Gemini response as JSON');
+            }
+          } else {
+            throw new Error('No JSON found in Gemini response');
+          }
+        }
+
+        const contact: ContactInfo = {
+          firstName: parsed.firstName || '',
+          lastName: parsed.lastName || '',
+          title: parsed.title || '',
+          company: parsed.company || '',
+          email: parsed.email || '',
+          website: parsed.website || '',
+          address: parsed.address || '',
+          notes: parsed.notes || '',
+          landlines: Array.isArray(parsed.landlines) ? parsed.landlines.filter(Boolean) : [],
+          mobiles: Array.isArray(parsed.mobiles) ? parsed.mobiles.filter(Boolean) : [],
+        };
+
+        // Stream partial results to UI
+        setPartialContact(contact);
+
+        return contact;
+      } catch (err: any) {
+        lastError = err;
+        const msg = err.message || '';
+        // Only retry on rate limit errors
+        if ((msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED')) && attempt < MAX_RETRIES) {
+          continue;
+        }
+        throw err;
+      }
+    }
+
+    throw lastError;
+  };
+
+  /**
+   * FALLBACK: Tesseract.js local OCR + regex parser.
+   * Used when Gemini API is unavailable or rate-limited.
+   */
+  const scanWithTesseract = async (base64Images: string[]): Promise<ContactInfo> => {
+    const processedImages = await Promise.all(base64Images.map(img => preprocessImageForOCR(img)));
+    let allText = '';
+
+    for (const img of processedImages) {
+      const result = await Tesseract.recognize(img, 'eng', {
+        logger: (info: any) => {
+          if (info.status === 'recognizing text' && info.progress > 0.3 && allText) {
+            const partial = parsePartialContact(allText);
+            setPartialContact(prev => ({ ...prev, ...partial }));
+          }
+        }
+      });
+      allText += result.data.text + '\n';
+      const partial = parsePartialContact(allText);
+      setPartialContact(prev => ({ ...prev, ...partial }));
+    }
+
+    console.log('Tesseract OCR text:', allText);
+    return parseContactFromText(allText);
+  };
+
+>>>>>>> 57bd160 (Improve OCR accuracy, field categorization, and image preprocessing for business card scanning)
   const reset = () => {
     setImages([]);
     setContact(null);
@@ -380,7 +604,7 @@ export default function App() {
           </div>
         </div>
         {(images.length > 0 || contact) && (
-          <button 
+          <button
             onClick={reset}
             className="p-2 hover:bg-stone-100 rounded-full transition-colors text-stone-400 hover:text-stone-600"
           >
@@ -392,7 +616,7 @@ export default function App() {
       <main className="max-w-xl mx-auto p-3 pb-10">
         <AnimatePresence mode="wait">
           {(step === 'front' || step === 'back') && !contact ? (
-            <motion.div 
+            <motion.div
               key="camera"
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
@@ -400,13 +624,13 @@ export default function App() {
               className="space-y-3"
             >
               <div className="relative aspect-[4/3] sm:aspect-[3/2] max-h-[40vh] sm:max-h-none bg-stone-900 rounded-2xl sm:rounded-3xl overflow-hidden shadow-2xl border-4 border-white">
-                <video 
-                  ref={videoRef} 
-                  autoPlay 
-                  playsInline 
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  playsInline
                   className="w-full h-full object-cover"
                 />
-                
+
                 {/* Guide Overlay */}
                 <div className="absolute inset-0 border-[40px] border-black/40 pointer-events-none">
                   <div className="w-full h-full border-2 border-white/50 rounded-lg flex items-center justify-center">
@@ -427,7 +651,7 @@ export default function App() {
                   <div className="absolute inset-0 flex flex-col items-center justify-center bg-stone-900/90 p-8 text-center">
                     <AlertCircle className="w-12 h-12 text-red-500 mb-4" />
                     <p className="text-white text-sm mb-6">{error}</p>
-                    <button 
+                    <button
                       onClick={startCamera}
                       className="bg-white text-stone-900 px-6 py-2 rounded-xl font-bold text-sm hover:bg-stone-100 transition-colors flex items-center gap-2"
                     >
@@ -443,8 +667,8 @@ export default function App() {
                   {step === 'front' ? 'Capture Front Side' : 'Capture Back Side'}
                 </h2>
                 <p className="text-stone-500 text-xs">
-                  {step === 'front' 
-                    ? 'Position the front of the card within the frame.' 
+                  {step === 'front'
+                    ? 'Position the front of the card within the frame.'
                     : 'Capture the back side if it has info.'}
                 </p>
               </div>
@@ -507,7 +731,7 @@ export default function App() {
               </div>
             </motion.div>
           ) : step === 'analyzing' ? (
-            <motion.div 
+            <motion.div
               key="analyzing"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -516,13 +740,13 @@ export default function App() {
               <div className="bg-white p-8 rounded-[2rem] shadow-xl shadow-stone-200/50 border border-stone-100 space-y-8 relative overflow-hidden">
                 {/* Shimmer Effect */}
                 <div className="absolute inset-0 bg-gradient-to-r from-transparent via-stone-50/50 to-transparent -translate-x-full animate-[shimmer_2s_infinite]" />
-                
+
                 <div className="space-y-3">
                   <p className="text-[10px] uppercase tracking-widest font-bold text-emerald-600 flex items-center gap-2">
                     <Loader2 className="w-3 h-3 animate-spin" />
                     Extracting Data...
                   </p>
-                  
+
                   <div className="h-8 w-3/4 bg-stone-100 rounded-lg animate-pulse">
                     {partialContact?.firstName && (
                       <span className="px-1 text-2xl font-bold tracking-tight text-stone-900">
@@ -530,13 +754,13 @@ export default function App() {
                       </span>
                     )}
                   </div>
-                  
+
                   <div className="h-4 w-1/2 bg-stone-50 rounded animate-pulse">
                     {partialContact?.title && (
                       <span className="px-1 text-stone-700 font-medium">{partialContact.title}</span>
                     )}
                   </div>
-                  
+
                   <div className="h-4 w-1/3 bg-stone-50 rounded animate-pulse">
                     {partialContact?.company && (
                       <span className="px-1 text-stone-500 font-medium">{partialContact.company}</span>
@@ -559,7 +783,7 @@ export default function App() {
                       <div className="flex-1 space-y-1">
                         <p className="text-[10px] uppercase tracking-widest font-bold text-stone-300">{field.label}</p>
                         {field.value ? (
-                          <motion.p 
+                          <motion.p
                             initial={{ opacity: 0, x: -10 }}
                             animate={{ opacity: 1, x: 0 }}
                             className="font-medium text-stone-900"
@@ -578,7 +802,7 @@ export default function App() {
               <div className="text-center space-y-2">
                 <p className="text-stone-500 text-sm font-medium">Reading {images.length} side{images.length > 1 ? 's' : ''} of your card...</p>
                 <div className="w-full max-w-xs mx-auto bg-stone-100 h-1 rounded-full overflow-hidden">
-                  <motion.div 
+                  <motion.div
                     initial={{ width: "0%" }}
                     animate={{ width: "100%" }}
                     transition={{ duration: 4, ease: "linear" }}
@@ -588,7 +812,7 @@ export default function App() {
               </div>
             </motion.div>
           ) : (
-            <motion.div 
+            <motion.div
               key="result"
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
@@ -607,7 +831,7 @@ export default function App() {
               </div>
 
               {error && (
-                <motion.div 
+                <motion.div
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
                   className="bg-red-50 border border-red-100 p-4 rounded-2xl flex items-start gap-3 text-red-700"
@@ -616,7 +840,7 @@ export default function App() {
                   <div className="space-y-1">
                     <p className="font-semibold text-sm">Scanning Failed</p>
                     <p className="text-sm opacity-90">{error}</p>
-                    <button 
+                    <button
                       onClick={reset}
                       className="text-xs font-bold uppercase tracking-wider mt-2 hover:underline"
                     >
@@ -627,7 +851,7 @@ export default function App() {
               )}
 
               {contact && (
-                <motion.div 
+                <motion.div
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   className="bg-white p-8 rounded-[2rem] shadow-xl shadow-stone-200/50 border border-stone-100 space-y-8"
