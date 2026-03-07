@@ -270,8 +270,15 @@ export default function App() {
       // @ts-ignore - Vite environment variable injection
       const apiKey = (import.meta as any).env?.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
 
+      console.log("AI starting scan with images count:", base64Images.length);
+      if (apiKey) {
+        console.log("API Key found (starts with):", apiKey.substring(0, 4) + "...");
+      } else {
+        console.warn("API Key is missing or undefined.");
+      }
+
       if (!apiKey || apiKey === "MY_GEMINI_API_KEY" || apiKey.includes("YOUR_API_KEY")) {
-        throw new Error("Gemini API Key is missing. Please set VITE_GEMINI_API_KEY in your environment variables.");
+        throw new Error("Gemini API Key is missing. Please set VITE_GEMINI_API_KEY in your project environment variables.");
       }
 
       const ai = new GoogleGenAI({ apiKey });
@@ -325,12 +332,15 @@ Return ONLY a valid JSON object:
 
       const stream = await ai.models.generateContentStream({
         model: "gemini-2.0-flash",
-        contents: {
-          parts: [
-            { text: prompt },
-            ...imageParts
-          ]
-        },
+        contents: [
+          {
+            role: "user",
+            parts: [
+              { text: prompt },
+              ...imageParts
+            ]
+          }
+        ],
         config: {
           responseMimeType: "application/json",
           responseSchema: {
@@ -455,8 +465,8 @@ Return ONLY a valid JSON object:
           ? "The AI service is currently busy. Please try again."
           : "Failed to scan the card. Please ensure the image is clear and try again.");
       }
-      setStep('front');
-      setImages([]);
+      setStep('review'); // Stay on review so user can see error and retry
+      // setImages([]); // Do NOT clear images so user doesn't have to recapture
     } finally {
       setIsScanning(false);
       setPartialContact(null);
