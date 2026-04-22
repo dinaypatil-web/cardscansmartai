@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { Camera, RefreshCw, UserPlus, Download, Check, AlertCircle, Loader2, ScanLine, X, Globe, FileText, Mail, MapPin, Briefcase, Phone, Smartphone } from 'lucide-react';
+import { Camera, RefreshCw, UserPlus, Download, Check, AlertCircle, Loader2, ScanLine, X, Globe, FileText, Mail, MapPin, Briefcase, Phone, Smartphone, ImagePlus } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { GoogleGenAI, Type, ThinkingLevel } from "@google/genai";
 import confetti from 'canvas-confetti';
@@ -170,6 +170,8 @@ export default function App() {
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const fileInputBackRef = useRef<HTMLInputElement>(null);
 
   // Initialize Camera
   useEffect(() => {
@@ -258,6 +260,42 @@ export default function App() {
   const skipBackSide = () => {
     setStep('review');
   };
+
+  const handleGalleryUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>, side: 'front' | 'back') => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Accept only image types
+    if (!file.type.startsWith('image/')) {
+      setError('Please select a valid image file.');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const dataUrl = ev.target?.result as string;
+      if (!dataUrl) return;
+
+      // Flash effect for visual feedback
+      setShowFlash(true);
+      setTimeout(() => setShowFlash(false), 300);
+
+      const newImages = side === 'front' ? [dataUrl] : [...images, dataUrl];
+      setImages(newImages);
+
+      setTimeout(() => {
+        if (side === 'front') {
+          setStep('back');
+        } else {
+          setStep('review');
+        }
+      }, 400);
+    };
+    reader.readAsDataURL(file);
+
+    // Reset file input so same file can be re-selected
+    e.target.value = '';
+  }, [images]);
 
   const scanCard = async (base64Images: string[], retryCount = 0) => {
     if (isScanning && retryCount === 0) return; // Guard against multiple clicks
@@ -618,15 +656,58 @@ Return ONLY a valid JSON object:
                         <p className="text-[10px] text-stone-400 font-bold uppercase tracking-widest">Cooling down...</p>
                       </div>
                     ) : (
-                      <button
-                        onClick={captureImage}
-                        disabled={!isCameraReady}
-                        className="group relative w-14 h-14 bg-white rounded-full flex items-center justify-center shadow-xl border-4 border-stone-100 active:scale-95 transition-transform disabled:opacity-50"
-                      >
-                        <div className="w-10 h-10 bg-emerald-600 rounded-full flex items-center justify-center group-hover:bg-emerald-500 transition-colors">
-                          <Camera className="text-white w-5 h-5" />
+                      <div className="flex flex-col items-center gap-3 w-full">
+                        {/* Camera Capture Button */}
+                        <button
+                          onClick={captureImage}
+                          disabled={!isCameraReady}
+                          className="group relative w-14 h-14 bg-white rounded-full flex items-center justify-center shadow-xl border-4 border-stone-100 active:scale-95 transition-transform disabled:opacity-50"
+                          title="Capture from camera"
+                        >
+                          <div className="w-10 h-10 bg-emerald-600 rounded-full flex items-center justify-center group-hover:bg-emerald-500 transition-colors">
+                            <Camera className="text-white w-5 h-5" />
+                          </div>
+                        </button>
+
+                        {/* Divider */}
+                        <div className="flex items-center gap-3 w-full max-w-xs">
+                          <div className="flex-1 h-px bg-stone-200" />
+                          <span className="text-[10px] font-bold uppercase tracking-widest text-stone-400">or</span>
+                          <div className="flex-1 h-px bg-stone-200" />
                         </div>
-                      </button>
+
+                        {/* Upload from Gallery Button */}
+                        <button
+                          onClick={() =>
+                            step === 'front'
+                              ? fileInputRef.current?.click()
+                              : fileInputBackRef.current?.click()
+                          }
+                          className="flex items-center gap-2 px-5 py-2.5 bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold text-sm rounded-xl transition-all active:scale-[0.97] border border-stone-200"
+                          title="Upload from gallery"
+                        >
+                          <ImagePlus className="w-4 h-4 text-emerald-600" />
+                          Upload from Gallery
+                        </button>
+
+                        {/* Hidden file inputs */}
+                        <input
+                          ref={fileInputRef}
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={(e) => handleGalleryUpload(e, 'front')}
+                          aria-label="Upload front side of card from gallery"
+                        />
+                        <input
+                          ref={fileInputBackRef}
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={(e) => handleGalleryUpload(e, 'back')}
+                          aria-label="Upload back side of card from gallery"
+                        />
+                      </div>
                     )}
 
                     {step === 'back' && (
