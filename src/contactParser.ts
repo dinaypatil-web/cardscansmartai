@@ -22,14 +22,25 @@ export interface ContactInfo {
 
 const EMAIL_REGEX = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g;
 
-// Comprehensive phone regex — handles international formats, brackets, dots, dashes, spaces.
-// Improved to be more selective and avoid matching short numeric sequences or date-like strings.
-const PHONE_REGEX = /(?:(?:\+|00)\s*\d{1,3}[\s.\-]?)?(?:\(?\d{2,5}\)?[\s.\-]?)?\d{2,5}[\s.\-]?\d{2,6}(?:\s*(?:\/|,)\s*\d{2,6})*/g;
+/**
+ * Phone regex v3 — handles Indian STD, international, toll-free, and mobile formats.
+ * Examples matched:
+ *   +91 98765 43210  |  +91-9876543210  |  9876543210
+ *   (022) 2345-6789  |  022-23456789    |  0261-234567
+ *   1800-XXX-XXXX (toll-free)           |  +1 (800) 123-4567
+ */
+const PHONE_REGEX = /(?:(?:\+|00)\s*\d{1,3}[\s.\-]?)?(?:\(?0?\d{2,5}\)?[\s.\-]?)?\d{2,5}[\s.\-]?\d{2,6}(?:[\s.\-]?\d{2,4})?(?:\s*(?:\/|,|Ext\.?|x)\s*\d{1,6})*/g;
 
 // Website regex — matches URLs and domain patterns
 const WEBSITE_REGEX = /(?:https?:\/\/)?(?:www\.)?[a-zA-Z0-9](?:[a-zA-Z0-9\-]*[a-zA-Z0-9])?(?:\.[a-zA-Z]{2,})+(?:\/[^\s,)]*)?/gi;
 
-const PIN_CODE_REGEX = /\b\d{5,6}\b/;
+// Indian PIN code: 6 digits starting with 1-9 (not 0)
+const PIN_CODE_REGEX = /\b[1-9]\d{5}\b/;
+
+// Indian GST / PAN / Udyam identifiers — captured into notes
+const GST_REGEX = /\b\d{2}[A-Z]{5}\d{4}[A-Z][A-Z\d]Z[A-Z\d]\b/g;
+const PAN_REGEX = /\b[A-Z]{5}\d{4}[A-Z]\b/g;
+const UDYAM_REGEX = /UDYAM[\-\s]?[A-Z]{2}[\-\s]?\d{2}[\-\s]?\d{7}/gi;
 
 // ============================================================
 // KEYWORD DATABASES
@@ -97,35 +108,42 @@ const JOB_TITLE_PATTERNS: Array<{ pattern: RegExp; weight: number }> = [
 const COMPANY_PATTERNS: Array<{ pattern: RegExp; weight: number }> = [
   // Strong legal suffixes
   { pattern: /\b(?:pvt|private)\s*\.?\s*(?:ltd|limited)\b/i, weight: 10 },
+  { pattern: /\bopc\s*pvt\b/i, weight: 10 },
+  { pattern: /\b(?:llp|lLP)\b/, weight: 9 },
   { pattern: /\bltd\.?\b/i, weight: 9 },
   { pattern: /\blimited\b/i, weight: 9 },
   { pattern: /\bllc\b/i, weight: 9 },
-  { pattern: /\bllp\b/i, weight: 9 },
   { pattern: /\binc\.?\b/i, weight: 9 },
   { pattern: /\bincorporated\b/i, weight: 9 },
   { pattern: /\bcorp\.?\b/i, weight: 9 },
   { pattern: /\bcorporation\b/i, weight: 9 },
-  { pattern: /\b(?:co|company)\b\.?/i, weight: 6 },
+  { pattern: /\b(?:co|company)\.?\b/i, weight: 6 },
+  { pattern: /\bproprietorship\b/i, weight: 9 },
+  { pattern: /\bpartnership\b/i, weight: 8 },
 
   // Business entity types
   { pattern: /\bgroup\s+of\s+(?:companies|industries)\b/i, weight: 10 },
   { pattern: /\bgroup\b/i, weight: 5 },
   { pattern: /\b(?:enterprises?|ventures?|holdings?)\b/i, weight: 7 },
+  { pattern: /\binfra(?:structure)?\b/i, weight: 6 },
 
   // Service/Industry keywords
   { pattern: /\b(?:solutions?|services?|technologies|tech)\b/i, weight: 5 },
   { pattern: /\b(?:industries|associates|consultants|consulting)\b/i, weight: 6 },
-  { pattern: /\b(?:international|global)\b/i, weight: 3 },
-  { pattern: /\b(?:foundation|institute|academy)\b/i, weight: 5 },
+  { pattern: /\b(?:international|global|worldwide|overseas)\b/i, weight: 3 },
+  { pattern: /\b(?:foundation|institute|academy|school|college|university)\b/i, weight: 5 },
   { pattern: /\b(?:labs?|studio|systems?)\b/i, weight: 4 },
-  { pattern: /\b(?:infotech|infosystems|softech|softtech)\b/i, weight: 7 },
-  { pattern: /\b(?:traders?|trading|exports?|imports?|distributors?)\b/i, weight: 6 },
-  { pattern: /\b(?:hospital|clinic|pharmacy|medical)\b/i, weight: 5 },
-  { pattern: /\b(?:builders?|construction|realty|real\s*estate|developers?)\b/i, weight: 5 },
-  { pattern: /\b(?:motors?|automobiles?|auto)\b/i, weight: 4 },
-  { pattern: /\b(?:jewellers?|jewelers?|textiles?|garments?)\b/i, weight: 5 },
-  { pattern: /\b(?:publishers?|printing|press)\b/i, weight: 5 },
-  { pattern: /\b(?:agency|agencies)\b/i, weight: 5 },
+  { pattern: /\b(?:infotech|infosystems|softech|softtech|infocomm)\b/i, weight: 7 },
+  { pattern: /\b(?:traders?|trading|exports?|imports?|distributors?|suppliers?)\b/i, weight: 6 },
+  { pattern: /\b(?:hospital|clinic|pharmacy|medical|diagnostics|healthcare)\b/i, weight: 5 },
+  { pattern: /\b(?:builders?|construction|realty|real\s*estate|developers?|infra)\b/i, weight: 5 },
+  { pattern: /\b(?:motors?|automobiles?|auto|vehicles?)\b/i, weight: 4 },
+  { pattern: /\b(?:jewellers?|jewelers?|textiles?|garments?|fashion|boutique)\b/i, weight: 5 },
+  { pattern: /\b(?:publishers?|printing|press|media|publications?)\b/i, weight: 5 },
+  { pattern: /\b(?:agency|agencies|marketing|advertising|promotions?)\b/i, weight: 5 },
+  { pattern: /\b(?:logistics?|transport|cargo|shipping|courier|freight)\b/i, weight: 6 },
+  { pattern: /\b(?:foods?|catering|restaurant|hotel|hospitality|bakery)\b/i, weight: 5 },
+  { pattern: /\bmidc\b/i, weight: 4 },
 ];
 
 // Address keywords
@@ -145,21 +163,36 @@ const ADDRESS_KEYWORDS = [
   'pin', 'zip', 'landmark',
 ];
 
-// Indian and major international cities for address detection
+// Indian and major international cities/states for address detection
 const CITY_NAMES = [
-  'mumbai', 'delhi', 'bangalore', 'bengaluru', 'chennai', 'kolkata', 'hyderabad',
-  'pune', 'ahmedabad', 'jaipur', 'lucknow', 'kanpur', 'nagpur', 'indore',
-  'thane', 'bhopal', 'visakhapatnam', 'vadodara', 'surat', 'nashik',
-  'faridabad', 'ghaziabad', 'noida', 'gurgaon', 'gurugram',
-  'chandigarh', 'coimbatore', 'kochi', 'patna', 'agra', 'varanasi',
-  'rajkot', 'meerut', 'mysore', 'mysuru', 'mangalore', 'mangaluru',
-  'trivandrum', 'thiruvananthapuram', 'madurai', 'aurangabad',
+  // Top metros
+  'mumbai', 'delhi', 'new delhi', 'bangalore', 'bengaluru', 'chennai', 'kolkata', 'hyderabad',
+  // Maharashtra
+  'pune', 'nagpur', 'nashik', 'aurangabad', 'solapur', 'amravati', 'navi mumbai',
+  'thane', 'kalyan', 'dombivli', 'vasai', 'virar', 'panvel', 'raigad',
+  // Gujarat
+  'ahmedabad', 'surat', 'vadodara', 'rajkot', 'bhavnagar', 'jamnagar', 'gandhinagar',
+  // NCR / North India
+  'noida', 'gurgaon', 'gurugram', 'faridabad', 'ghaziabad', 'meerut', 'agra',
+  'lucknow', 'kanpur', 'varanasi', 'allahabad', 'prayagraj', 'jaipur', 'jodhpur',
+  'chandigarh', 'ludhiana', 'amritsar', 'dehradun', 'haridwar',
+  // South India
+  'coimbatore', 'kochi', 'cochin', 'trivandrum', 'thiruvananthapuram', 'madurai',
+  'mysore', 'mysuru', 'mangalore', 'mangaluru', 'visakhapatnam', 'vizag',
+  'vijayawada', 'tirupati', 'warangal',
+  // East India
+  'patna', 'bhubaneswar', 'guwahati', 'ranchi',
+  // MP, Chhattisgarh
+  'bhopal', 'indore', 'raipur', 'jabalpur',
+  // International
   'new york', 'london', 'san francisco', 'los angeles', 'chicago', 'toronto',
-  'singapore', 'dubai', 'hong kong', 'sydney', 'tokyo', 'shanghai',
+  'singapore', 'dubai', 'abu dhabi', 'hong kong', 'sydney', 'tokyo', 'shanghai',
+  // Indian states
   'maharashtra', 'karnataka', 'tamil nadu', 'telangana', 'gujarat',
   'rajasthan', 'uttar pradesh', 'madhya pradesh', 'kerala', 'west bengal',
-  'andhra pradesh', 'bihar', 'punjab', 'haryana', 'goa',
-  'india', 'usa', 'uk', 'uae', 'canada', 'australia',
+  'andhra pradesh', 'bihar', 'punjab', 'haryana', 'goa', 'odisha', 'assam',
+  'chhattisgarh', 'jharkhand', 'uttarakhand', 'himachal pradesh',
+  'india', 'usa', 'uk', 'uae', 'canada', 'australia', 'germany', 'france',
 ];
 
 // Phone label patterns
@@ -349,19 +382,19 @@ function getNameScore(line: string, lineIndex: number, totalLines: number): numb
   const lineLength = line.length;
 
   // Immediate disqualifiers
-  if (hasDigits && line.match(/\d/g)!.length > 2) return 0; // names usually don't have many digits
-  if (lineLength < 2 || lineLength > 50) return 0;
+  if (hasDigits && (line.match(/\d/g) || []).length > 2) return 0;
+  if (lineLength < 2 || lineLength > 55) return 0;
   if (wordCount > 5) return 0;
   if (line.includes('@')) return 0;
-  if (/(?:www\.|https?:\/\/)/i.test(line)) return 0;
+  if (/(?:www\.|https?:\/\/)/.test(line)) return 0;
 
   let score = 5;
 
-  // Boost: has name prefix (Mr., Dr., etc.)
-  if (NAME_PREFIXES.test(line)) score += 5;
+  // Boost: has name prefix / honorific
+  if (NAME_PREFIXES.test(line)) score += 6;
 
-  // Boost: 2-3 words (typical name length)
-  if (wordCount >= 2 && wordCount <= 3) score += 3;
+  // Boost: 2-4 words (Indian names often have 3 parts)
+  if (wordCount >= 2 && wordCount <= 4) score += 3;
 
   // Boost: appears early in the card (names are usually at the top)
   if (lineIndex === 0) score += 6;
@@ -369,19 +402,24 @@ function getNameScore(line: string, lineIndex: number, totalLines: number): numb
   else if (lineIndex <= 3) score += 2;
   else score -= 2;
 
-  // Boost: all words start with uppercase (proper nouns)
   const words = line.split(/\s+/);
-  const allCapitalized = words.every(w => /^[A-Z]/.test(w));
-  if (allCapitalized) score += 3;
 
-  // Boost: ALL CAPS (some cards print names in uppercase)
-  if (line === line.toUpperCase() && /[A-Z]/.test(line)) score += 2;
+  // Boost: Title-Case (all words start uppercase)
+  if (words.every(w => /^[A-Z][a-z]/.test(w))) score += 4;
+
+  // Boost: ALL-CAPS name (very common on Indian business cards)
+  // e.g. "RAJESH KUMAR SHARMA" — each word 2+ chars, no digits
+  const isAllCaps = line === line.toUpperCase() && /[A-Z]{2,}/.test(line);
+  if (isAllCaps && words.every(w => w.length >= 2)) score += 5;
 
   // Reduce: contains special characters common in non-name fields
   if (/[/:;#@{}()[\]]/.test(line)) score -= 4;
 
-  // Reduce: contains common non-name words
-  if (/\b(?:road|street|floor|building|pvt|ltd|email|phone|tel|fax|mob|web|www|extn|near|opp|landmark)\b/i.test(line)) score -= 7;
+  // Reduce: contains common non-name keywords
+  if (/\b(?:road|street|floor|building|pvt|ltd|llp|email|phone|tel|fax|mob|cell|web|www|extn|near|opp|landmark|gstin|gst|pan|udyam|cin)\b/i.test(line)) score -= 8;
+
+  // Reduce: looks like a phone number pattern
+  if (/^[\d\s\+\-\.\(\)]{7,}$/.test(line)) score -= 8;
 
   return Math.max(0, score);
 }
@@ -675,8 +713,20 @@ export function parseContactFromText(rawText: string): ContactInfo {
       noteLines.push(a.line);
     }
   }
-  if (noteLines.length > 0) {
-    contact.notes = noteLines.join(' | ');
+
+  // Also scan ALL text for GST/PAN/Udyam that may be embedded in any line
+  const allText = lines.join(' ');
+  const gstMatches = [...allText.matchAll(GST_REGEX)].map(m => `GSTIN: ${m[0]}`);
+  const panMatches = [...allText.matchAll(PAN_REGEX)]
+    .map(m => m[0])
+    .filter(pan => !allText.match(new RegExp(`GSTIN.*${pan}`))) // avoid duplicating GST PAN
+    .map(p => `PAN: ${p}`);
+  const udyamMatches = [...allText.matchAll(UDYAM_REGEX)].map(m => `Udyam: ${m[0]}`);
+
+  const specialIds = [...gstMatches, ...panMatches, ...udyamMatches];
+  const allNotes = [...noteLines, ...specialIds];
+  if (allNotes.length > 0) {
+    contact.notes = [...new Set(allNotes)].join(' | ');
   }
 
   // ---- Dedup phone numbers ----

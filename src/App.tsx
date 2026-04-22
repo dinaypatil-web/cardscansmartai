@@ -63,7 +63,11 @@ const downloadVCard = (contact: ContactInfo) => {
   URL.revokeObjectURL(url);
 };
 
-const resizeImage = (base64Str: string, maxWidth = 800, maxHeight = 800): Promise<string> => {
+/**
+ * Resize image for AI vision APIs.
+ * 1600px / 0.9 quality — preserves legibility of 8pt fonts on business cards.
+ */
+const resizeImage = (base64Str: string, maxWidth = 1600, maxHeight = 1600): Promise<string> => {
   return new Promise((resolve) => {
     const img = new Image();
     img.src = base64Str;
@@ -73,15 +77,9 @@ const resizeImage = (base64Str: string, maxWidth = 800, maxHeight = 800): Promis
       let height = img.height;
 
       if (width > height) {
-        if (width > maxWidth) {
-          height *= maxWidth / width;
-          width = maxWidth;
-        }
+        if (width > maxWidth) { height = Math.round(height * maxWidth / width); width = maxWidth; }
       } else {
-        if (height > maxHeight) {
-          width *= maxHeight / height;
-          height = maxHeight;
-        }
+        if (height > maxHeight) { width = Math.round(width * maxHeight / height); height = maxHeight; }
       }
 
       canvas.width = width;
@@ -92,17 +90,16 @@ const resizeImage = (base64Str: string, maxWidth = 800, maxHeight = 800): Promis
         ctx.imageSmoothingQuality = 'high';
         ctx.drawImage(img, 0, 0, width, height);
       }
-      // Balanced quality for readability vs payload size
-      resolve(canvas.toDataURL('image/jpeg', 0.7));
+      resolve(canvas.toDataURL('image/jpeg', 0.9));
     };
   });
 };
 
 /**
- * Preprocess image for Tesseract.js fallback OCR.
- * Grayscale + adaptive thresholding for better text extraction.
+ * Preprocess image for Tesseract.js OCR.
+ * Pipeline: upscale → grayscale → Gaussian denoise → unsharp mask (sharpen) → Otsu auto-threshold.
  */
-const preprocessImageForOCR = (base64Str: string, maxWidth = 1600, maxHeight = 1600): Promise<string> => {
+const preprocessImageForOCR = (base64Str: string, maxWidth = 2400, maxHeight = 2400): Promise<string> => {
   return new Promise((resolve) => {
     const img = new Image();
     img.src = base64Str;
@@ -111,48 +108,75 @@ const preprocessImageForOCR = (base64Str: string, maxWidth = 1600, maxHeight = 1
       let width = img.width;
       let height = img.height;
 
-      if (width > height) {
-        if (width > maxWidth) { height *= maxWidth / width; width = maxWidth; }
-      } else {
-        if (height > maxHeight) { width *= maxHeight / height; height = maxHeight; }
-      }
+      // Upscale small images — Tesseract reads best at ≥300 DPI equivalent
+      const scale = Math.min(3, Math.max(1, 2400 / Math.max(width, height)));
+      width = Math.round(width * scale);
+      height = Math.round(height * scale);
+      if (width > maxWidth) { height = Math.round(height * maxWidth / width); width = maxWidth; }
+      if (height > maxHeight) { width = Math.round(width * maxHeight / height); height = maxHeight; }
 
       canvas.width = width;
       canvas.height = height;
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = 'high';
-        ctx.drawImage(img, 0, 0, width, height);
+      const ctx = canvas.getContext('2d')!;
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(img, 0, 0, width, height);
 
-        const imageData = ctx.getImageData(0, 0, width, height);
-        const data = imageData.data;
+      const imageData = ctx.getImageData(0, 0, width, height);
+      const data = imageData.data;
+      const total = width * height;
 
-        // Grayscale + Denoise + Contrast Stretch + Adaptive Thresholding (Simple)
-        let min = 255, max = 0;
-        for (let i = 0; i < data.length; i += 4) {
-          // Weighted grayscale for better contrast
-          const gray = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-          data[i] = data[i + 1] = data[i + 2] = gray;
-          if (gray < min) min = gray;
-          if (gray > max) max = gray;
-        }
-
-        const range = max - min || 1;
-        const threshold = min + (range * 0.45); // Approximate adaptive threshold
-
-        for (let i = 0; i < data.length; i += 4) {
-          // Contrast stretch
-          let val = ((data[i] - min) / range) * 255;
-
-          // Simple Binarization (Threshholding) for Tesseract
-          // We provide a slight gradient for "soft" binarization which Tesseract often likes better than pure salt/pepper
-          val = val > threshold ? 255 : Math.max(0, val - 20);
-
-          data[i] = data[i + 1] = data[i + 2] = val;
-        }
-        ctx.putImageData(imageData, 0, 0);
+      // Step 1: Weighted grayscale (ITU-R BT.601)
+      const gray = new Float32Array(total);
+      for (let i = 0, p = 0; i < data.length; i += 4, p++) {
+        gray[p] = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
       }
+
+      // Step 2: 3×3 Gaussian blur for noise reduction
+      const blurred = new Float32Array(total);
+      const k = [1/16, 2/16, 1/16, 2/16, 4/16, 2/16, 1/16, 2/16, 1/16];
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          let acc = 0;
+          for (let ky = -1; ky <= 1; ky++) {
+            for (let kx = -1; kx <= 1; kx++) {
+              const ny = Math.min(height - 1, Math.max(0, y + ky));
+              const nx = Math.min(width - 1, Math.max(0, x + kx));
+              acc += gray[ny * width + nx] * k[(ky + 1) * 3 + (kx + 1)];
+            }
+          }
+          blurred[y * width + x] = acc;
+        }
+      }
+
+      // Step 3: Unsharp mask — amplifies edges so Tesseract reads fine fonts reliably
+      const sharpened = new Float32Array(total);
+      for (let p = 0; p < total; p++) {
+        sharpened[p] = Math.min(255, Math.max(0, gray[p] + 1.5 * (gray[p] - blurred[p])));
+      }
+
+      // Step 4: Otsu's method — automatically finds the optimal binarization threshold
+      const hist = new Uint32Array(256);
+      for (let p = 0; p < total; p++) hist[Math.round(sharpened[p])]++;
+      let sumAll = 0;
+      for (let t = 0; t < 256; t++) sumAll += t * hist[t];
+      let sumB = 0, wB = 0, maxVar = 0, otsu = 128;
+      for (let t = 0; t < 256; t++) {
+        wB += hist[t]; if (!wB) continue;
+        const wF = total - wB; if (!wF) break;
+        sumB += t * hist[t];
+        const mB = sumB / wB, mF = (sumAll - sumB) / wF;
+        const varBetween = wB * wF * (mB - mF) ** 2;
+        if (varBetween > maxVar) { maxVar = varBetween; otsu = t; }
+      }
+
+      // Step 5: Apply threshold — white bg, black text (ideal for Tesseract)
+      for (let p = 0, i = 0; p < total; p++, i += 4) {
+        const val = sharpened[p] > otsu ? 255 : 0;
+        data[i] = data[i + 1] = data[i + 2] = val;
+        data[i + 3] = 255;
+      }
+      ctx.putImageData(imageData, 0, 0);
       resolve(canvas.toDataURL('image/png'));
     };
   });
@@ -300,31 +324,67 @@ export default function App() {
     e.target.value = '';
   }, [images]);
 
-  // ─── Shared prompt & helpers ────────────────────────────────────────────────
-  const CARD_PROMPT = `You are an expert OCR system specialized in reading business/visiting cards with 100% accuracy.
+  // ─── Shared prompt & helpers ──────────────────────────────────────────────────
+  const CARD_PROMPT = `You are a world-class business card OCR specialist. Extract ALL contact information with maximum accuracy.
 
-INSTRUCTIONS:
-1. Carefully read EVERY piece of text on the card image(s), including small, faint, or stylized text.
-2. The card may contain text in multiple languages (English, Hindi, Marathi, Gujarati, etc.). Extract ALL text regardless of language.
-3. If there are multiple images, they represent the front and back of the SAME card — combine all information intelligently.
-4. Distinguish between brand/company names and personal names.
+CRITICAL READING RULES:
+1. Read EVERY visible character — including 6-8pt text, faint ink, embossed/foil print, and stylized fonts.
+2. Recognize ALL languages: English, Hindi, Marathi, Gujarati, Tamil, Telugu, Kannada, Bengali, etc. For non-Latin scripts, provide phonetic transliteration.
+3. Multiple images = FRONT and BACK of ONE card — merge ALL data intelligently, never duplicate.
+4. Correct known OCR confusions you spot: I↔1, O↔0, l↔|, S↔5, B↔8, G↔6.
 
-EXTRACTION RULES:
-- "firstName" + "lastName": The PERSON's name. Look for honorifics (Mr., Dr., Adv.) as hints.
-- "company": The legal or brand name of the business.
-- "title": Job title or designation.
-- "mobiles": Personal/mobile numbers. Look for "M:", "Mob:", or 10-digit Indian numbers starting with 6-9.
-- "landlines": Office/desk numbers. Look for "T:", "Ph:", "Off:", or numbers with STD codes.
-- "email": Look for "@" symbol.
-- "website": Full URL or domain name.
-- "address": Complete postal address.
-- "notes": GSTIN, PAN, Udyam numbers, social handles, slogans, certifications.
+FIELD-BY-FIELD EXTRACTION GUIDE:
 
-QUALITY RULES:
-- NEVER confuse '0' with 'O' in phone numbers. DO NOT hallucinate.
-- If a field is missing, return "" or [].
+firstName + lastName — The HUMAN person's name only.
+  • Honorifics hint at a name line: Mr., Mrs., Ms., Dr., Prof., Shri, Smt., Er., Adv., CA, CS, Ar.
+  • ALL-CAPS names are very common: "RAJESH KUMAR SHARMA" → firstName:"Rajesh", lastName:"Kumar Sharma".
+  • Do NOT place company/brand name here.
 
-Return ONLY a valid JSON object:
+company — Full registered business name.
+  • Entity suffixes: Pvt. Ltd., Ltd., LLP, OPC, Proprietorship, Partnership.
+  • Business words: Enterprises, Associates, Industries, Trading, Services, Solutions, Technologies, Consultants, Builders, Infra, Group.
+
+title — Exact job designation.
+  • Common Indian titles: Managing Director, MD, Director, Proprietor, Partner, Founder, CEO, GM, DGM, AGM, VP, Manager, Executive, Officer, Engineer, Architect, Consultant, Advocate, CA, CS.
+  • Preserve full phrasing: "Senior Sales Executive" not just "Executive".
+
+mobiles — Mobile/cellular numbers ONLY.
+  • Indian mobiles: 10 digits starting with 6, 7, 8, or 9.
+  • With country code: +91 98765 43210 or +91-9876543210.
+  • Labels: M:, Mob:, Cell:, Mobile:, WhatsApp:, WA:.
+  • Capture ALL mobile numbers — some cards have 2-3.
+
+landlines — Office, landline, and fax numbers ONLY.
+  • Indian STD format: 2-4 digit city code + 6-8 digit number.
+  • City codes: 022 (Mumbai), 011 (Delhi), 080 (Bangalore), 044 (Chennai), 033 (Kolkata), 040 (Hyderabad), 020 (Pune), 079 (Ahmedabad), 0261 (Surat), 0712 (Nagpur).
+  • Examples: (022) 2345-6789, 011-23456789, 0261-2345678.
+  • Labels: T:, Tel:, Ph:, Phone:, Off:, Office:, Fax:, F:, Res:.
+  • Fax numbers go here.
+
+email — Email address containing @. Extract verbatim.
+
+website — Website URL. Add "https://" prefix if missing.
+
+address — Complete postal address as one string.
+  • Include: shop/flat/gala/plot number, building, floor, street/road, area, city, state, PIN code.
+  • Indian terms: Gala No., Shop No., Plot No., S.No., Opp., Near, S.V. Road, Nagar, Colony, Chowk, Industrial Estate, MIDC, GIDC.
+  • Join multi-line fragments with ", ".
+
+notes — All remaining text not fitting above:
+  • GSTIN: 15-char format starting with 2-digit state code (e.g. 27AABCU9603R1ZX).
+  • PAN: 10-char AAAAA9999A format.
+  • Udyam/MSME: starts with "UDYAM-" (e.g. UDYAM-MH-04-0123456).
+  • CIN: starts with L or U followed by numbers.
+  • Social media: @handle, LinkedIn, Twitter/X, Instagram.
+  • ISO certifications, taglines, slogans, QR labels, service lists, any other identifiers.
+
+ZERO-HALLUCINATION RULES:
+• If a field is absent/illegible → return "" or []. NEVER guess or invent data.
+• Mobile and landline are MUTUALLY EXCLUSIVE — each number goes in exactly ONE array, never both.
+• Do NOT duplicate any number across arrays.
+• Preserve original number formatting (spaces, dashes, country codes).
+
+Return ONLY this exact JSON (no markdown, no explanation, nothing else):
 {"firstName":"","lastName":"","title":"","company":"","landlines":[],"mobiles":[],"email":"","website":"","address":"","notes":""}`;
 
   const sanitizeResult = (r: any): ContactInfo => ({
@@ -464,18 +524,39 @@ Return ONLY a valid JSON object:
     return sanitizeResult(r);
   };
 
-  // ─── Tier 3: Tesseract.js — offline, no API needed ─────────────────────────
+  // ─── Tier 3: Tesseract.js — offline, no API needed ──────────────────────────
   const scanWithTesseract = async (base64Images: string[]): Promise<ContactInfo> => {
-    const worker = await createWorker('eng', 1, {
-      logger: () => {}, // suppress logs
+    // OEM 1 = LSTM neural net (most accurate). PSM 6 = uniform text block.
+    const worker = await createWorker('eng', 1, { logger: () => {} });
+    await worker.setParameters({
+      tessedit_pageseg_mode: '6' as any,    // PSM 6: single uniform block
+      tessedit_ocr_engine_mode: '1' as any, // OEM 1: LSTM only
+      preserve_interword_spaces: '1' as any,
     });
+
     try {
       let combinedText = '';
+
       for (const img of base64Images) {
         const preprocessed = await preprocessImageForOCR(img);
-        const { data: { text } } = await worker.recognize(preprocessed);
-        combinedText += text + '\n';
+
+        // Pass 1 — PSM 6: treats card as a neat text block (handles most cards well)
+        const { data: { text: text6 } } = await worker.recognize(preprocessed);
+
+        // Pass 2 — PSM 11: sparse/scattered text (catches logos, corner text, QR labels)
+        await worker.setParameters({ tessedit_pageseg_mode: '11' as any });
+        const { data: { text: text11 } } = await worker.recognize(preprocessed);
+        await worker.setParameters({ tessedit_pageseg_mode: '6' as any }); // reset
+
+        // Merge: union of unique non-empty lines from both passes
+        const lines6 = new Set(text6.split('\n').map(l => l.trim()).filter(Boolean));
+        const merged = [...lines6];
+        text11.split('\n').map(l => l.trim()).filter(Boolean).forEach(l => {
+          if (!lines6.has(l)) merged.push(l);
+        });
+        combinedText += merged.join('\n') + '\n';
       }
+
       const contact = parseContactFromText(combinedText);
       if (!hasUsefulInfo(contact)) throw new Error('NO_INFO');
       setPartialContact(contact);
