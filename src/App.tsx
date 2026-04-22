@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { Camera, RefreshCw, UserPlus, Check, AlertCircle, Loader2, ScanLine, X, Globe, FileText, Mail, MapPin, Phone, Smartphone, ImagePlus, Zap, Cpu } from 'lucide-react';
+import { Camera, RefreshCw, UserPlus, Check, AlertCircle, Loader2, ScanLine, X, Globe, FileText, Mail, MapPin, Phone, Smartphone, ImagePlus, Zap, Cpu, Pencil, PlusCircle, Trash2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { GoogleGenAI, Type } from "@google/genai";
 import confetti from 'canvas-confetti';
@@ -194,6 +194,32 @@ export default function App() {
   const [step, setStep] = useState<'front' | 'back' | 'review' | 'analyzing' | 'result'>('front');
   const [showFlash, setShowFlash] = useState(false);
   const [activeProvider, setActiveProvider] = useState<'gemini' | 'groq' | 'openrouter' | 'tesseract' | null>(null);
+  const [editedContact, setEditedContact] = useState<ContactInfo | null>(null);
+
+  // Sync editedContact whenever a new scan result arrives
+  useEffect(() => {
+    if (contact) setEditedContact({ ...contact });
+  }, [contact]);
+
+  const setField = (field: keyof ContactInfo, value: string) =>
+    setEditedContact(prev => prev ? { ...prev, [field]: value } : prev);
+
+  const setPhoneItem = (type: 'mobiles' | 'landlines', idx: number, value: string) =>
+    setEditedContact(prev => {
+      if (!prev) return prev;
+      const arr = [...prev[type]];
+      arr[idx] = value;
+      return { ...prev, [type]: arr };
+    });
+
+  const addPhone = (type: 'mobiles' | 'landlines') =>
+    setEditedContact(prev => prev ? { ...prev, [type]: [...prev[type], ''] } : prev);
+
+  const removePhone = (type: 'mobiles' | 'landlines', idx: number) =>
+    setEditedContact(prev => {
+      if (!prev) return prev;
+      return { ...prev, [type]: prev[type].filter((_, i) => i !== idx) };
+    });
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -1033,104 +1059,222 @@ Return ONLY this exact JSON (no markdown, no explanation, nothing else):
                 </motion.div>
               )}
 
-              {contact && (
+              {contact && editedContact && (
                 <motion.div
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
-                  className="bg-white p-8 rounded-[2rem] shadow-xl shadow-stone-200/50 border border-stone-100 space-y-8"
+                  className="bg-white rounded-[2rem] shadow-xl shadow-stone-200/50 border border-stone-100 overflow-hidden"
                 >
-                  <div className="space-y-1">
-                    <p className="text-[10px] uppercase tracking-widest font-bold text-emerald-600">Contact Name</p>
-                    <h3 className="text-2xl font-bold tracking-tight text-stone-900">
-                      {contact.firstName} {contact.lastName}
-                    </h3>
-                    {contact.title && <p className="text-stone-700 font-medium">{contact.title}</p>}
-                    {contact.company && <p className="text-stone-500 font-medium">{contact.company}</p>}
+                  {/* Edit header banner */}
+                  <div className="bg-gradient-to-r from-emerald-500 to-teal-500 px-6 py-3 flex items-center gap-2">
+                    <Pencil className="w-3.5 h-3.5 text-white/80" />
+                    <p className="text-white text-[11px] font-bold uppercase tracking-widest">Review &amp; Edit — tap any field to correct</p>
                   </div>
 
-                  <div className="grid gap-6">
-                    {contact.landlines?.map((num, idx) => (
-                      <div key={`landline-${idx}`} className="flex items-center gap-4">
-                        <div className="w-10 h-10 rounded-full bg-stone-50 flex items-center justify-center text-stone-400">
-                          <Phone className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <p className="text-[10px] uppercase tracking-widest font-bold text-stone-400">Landline Number {contact.landlines.length > 1 ? idx + 1 : ''}</p>
-                          <p className="font-medium">{num}</p>
-                        </div>
-                      </div>
-                    ))}
-                    {contact.mobiles?.map((num, idx) => (
-                      <div key={`mobile-${idx}`} className="flex items-center gap-4">
-                        <div className="w-10 h-10 rounded-full bg-stone-50 flex items-center justify-center text-stone-400">
-                          <Smartphone className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <p className="text-[10px] uppercase tracking-widest font-bold text-stone-400">Mobile Number {contact.mobiles.length > 1 ? idx + 1 : ''}</p>
-                          <p className="font-medium">{num}</p>
-                        </div>
-                      </div>
-                    ))}
-                    {contact.email && (
-                      <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 rounded-full bg-stone-50 flex items-center justify-center text-stone-400">
-                          <Mail className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <p className="text-[10px] uppercase tracking-widest font-bold text-stone-400">Email</p>
-                          <p className="font-medium">{contact.email}</p>
-                        </div>
-                      </div>
-                    )}
-                    {contact.website && (
-                      <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 rounded-full bg-stone-50 flex items-center justify-center text-stone-400">
-                          <Globe className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <p className="text-[10px] uppercase tracking-widest font-bold text-stone-400">Website</p>
-                          <p className="font-medium">{contact.website}</p>
-                        </div>
-                      </div>
-                    )}
-                    {contact.address && (
-                      <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 rounded-full bg-stone-50 flex items-center justify-center text-stone-400">
-                          <MapPin className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <p className="text-[10px] uppercase tracking-widest font-bold text-stone-400">Address</p>
-                          <p className="font-medium text-sm leading-relaxed">{contact.address}</p>
-                        </div>
-                      </div>
-                    )}
-                    {contact.notes && (
-                      <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 rounded-full bg-stone-50 flex items-center justify-center text-stone-400">
-                          <FileText className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <p className="text-[10px] uppercase tracking-widest font-bold text-stone-400">Notes</p>
-                          <p className="font-medium text-sm leading-relaxed">{contact.notes}</p>
-                        </div>
-                      </div>
-                    )}
-                  </div>
+                  <div className="p-6 space-y-5">
 
-                  <div className="pt-4 flex gap-3">
-                    <button
-                      onClick={() => downloadVCard(contact)}
-                      className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-4 rounded-2xl flex items-center justify-center gap-2 shadow-lg shadow-emerald-200 transition-all active:scale-[0.98]"
-                    >
-                      <UserPlus className="w-5 h-5" />
-                      Save to Contacts
-                    </button>
-                    <button
-                      onClick={reset}
-                      className="w-14 bg-stone-100 hover:bg-stone-200 text-stone-600 rounded-2xl flex items-center justify-center transition-all active:scale-[0.98]"
-                    >
-                      <RefreshCw className="w-5 h-5" />
-                    </button>
+                    {/* Name row */}
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[9px] uppercase tracking-widest font-bold text-emerald-600 block mb-1">First Name</label>
+                        <input
+                          id="edit-firstName"
+                          value={editedContact.firstName}
+                          onChange={e => setField('firstName', e.target.value)}
+                          placeholder="First name"
+                          className="w-full text-base font-bold text-stone-900 bg-stone-50 border border-stone-200 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:border-transparent transition"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[9px] uppercase tracking-widest font-bold text-stone-400 block mb-1">Last Name</label>
+                        <input
+                          id="edit-lastName"
+                          value={editedContact.lastName}
+                          onChange={e => setField('lastName', e.target.value)}
+                          placeholder="Last name"
+                          className="w-full text-base font-bold text-stone-900 bg-stone-50 border border-stone-200 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:border-transparent transition"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Title */}
+                    <div>
+                      <label className="text-[9px] uppercase tracking-widest font-bold text-stone-400 block mb-1">Job Title / Designation</label>
+                      <input
+                        id="edit-title"
+                        value={editedContact.title || ''}
+                        onChange={e => setField('title', e.target.value)}
+                        placeholder="e.g. Managing Director"
+                        className="w-full text-sm font-medium text-stone-800 bg-stone-50 border border-stone-200 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:border-transparent transition"
+                      />
+                    </div>
+
+                    {/* Company */}
+                    <div>
+                      <label className="text-[9px] uppercase tracking-widest font-bold text-stone-400 block mb-1">Company</label>
+                      <input
+                        id="edit-company"
+                        value={editedContact.company || ''}
+                        onChange={e => setField('company', e.target.value)}
+                        placeholder="Company / Organisation"
+                        className="w-full text-sm font-medium text-stone-800 bg-stone-50 border border-stone-200 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:border-transparent transition"
+                      />
+                    </div>
+
+                    {/* Divider */}
+                    <div className="border-t border-stone-100" />
+
+                    {/* Mobile numbers */}
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <label className="text-[9px] uppercase tracking-widest font-bold text-stone-400 flex items-center gap-1.5">
+                          <Smartphone className="w-3 h-3" /> Mobile Numbers
+                        </label>
+                        <button
+                          onClick={() => addPhone('mobiles')}
+                          className="text-emerald-600 hover:text-emerald-700 transition flex items-center gap-1 text-[10px] font-bold"
+                        >
+                          <PlusCircle className="w-3.5 h-3.5" /> Add
+                        </button>
+                      </div>
+                      <div className="space-y-2">
+                        {editedContact.mobiles.length === 0 && (
+                          <p className="text-xs text-stone-400 italic px-1">No mobile numbers — tap Add to enter one</p>
+                        )}
+                        {editedContact.mobiles.map((num, idx) => (
+                          <div key={`mob-${idx}`} className="flex items-center gap-2">
+                            <input
+                              id={`edit-mobile-${idx}`}
+                              value={num}
+                              onChange={e => setPhoneItem('mobiles', idx, e.target.value)}
+                              placeholder="Mobile number"
+                              inputMode="tel"
+                              className="flex-1 text-sm font-medium text-stone-800 bg-stone-50 border border-stone-200 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:border-transparent transition"
+                            />
+                            <button onClick={() => removePhone('mobiles', idx)} className="text-stone-300 hover:text-red-400 transition p-1">
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Landline numbers */}
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <label className="text-[9px] uppercase tracking-widest font-bold text-stone-400 flex items-center gap-1.5">
+                          <Phone className="w-3 h-3" /> Landline / Office Numbers
+                        </label>
+                        <button
+                          onClick={() => addPhone('landlines')}
+                          className="text-emerald-600 hover:text-emerald-700 transition flex items-center gap-1 text-[10px] font-bold"
+                        >
+                          <PlusCircle className="w-3.5 h-3.5" /> Add
+                        </button>
+                      </div>
+                      <div className="space-y-2">
+                        {editedContact.landlines.length === 0 && (
+                          <p className="text-xs text-stone-400 italic px-1">No landlines — tap Add to enter one</p>
+                        )}
+                        {editedContact.landlines.map((num, idx) => (
+                          <div key={`land-${idx}`} className="flex items-center gap-2">
+                            <input
+                              id={`edit-landline-${idx}`}
+                              value={num}
+                              onChange={e => setPhoneItem('landlines', idx, e.target.value)}
+                              placeholder="Landline / fax number"
+                              inputMode="tel"
+                              className="flex-1 text-sm font-medium text-stone-800 bg-stone-50 border border-stone-200 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:border-transparent transition"
+                            />
+                            <button onClick={() => removePhone('landlines', idx)} className="text-stone-300 hover:text-red-400 transition p-1">
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="border-t border-stone-100" />
+
+                    {/* Email */}
+                    <div>
+                      <label className="text-[9px] uppercase tracking-widest font-bold text-stone-400 flex items-center gap-1.5 mb-1">
+                        <Mail className="w-3 h-3" /> Email
+                      </label>
+                      <input
+                        id="edit-email"
+                        value={editedContact.email || ''}
+                        onChange={e => setField('email', e.target.value)}
+                        placeholder="email@example.com"
+                        inputMode="email"
+                        className="w-full text-sm font-medium text-stone-800 bg-stone-50 border border-stone-200 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:border-transparent transition"
+                      />
+                    </div>
+
+                    {/* Website */}
+                    <div>
+                      <label className="text-[9px] uppercase tracking-widest font-bold text-stone-400 flex items-center gap-1.5 mb-1">
+                        <Globe className="w-3 h-3" /> Website
+                      </label>
+                      <input
+                        id="edit-website"
+                        value={editedContact.website || ''}
+                        onChange={e => setField('website', e.target.value)}
+                        placeholder="https://www.example.com"
+                        inputMode="url"
+                        className="w-full text-sm font-medium text-stone-800 bg-stone-50 border border-stone-200 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:border-transparent transition"
+                      />
+                    </div>
+
+                    {/* Address */}
+                    <div>
+                      <label className="text-[9px] uppercase tracking-widest font-bold text-stone-400 flex items-center gap-1.5 mb-1">
+                        <MapPin className="w-3 h-3" /> Address
+                      </label>
+                      <textarea
+                        id="edit-address"
+                        value={editedContact.address || ''}
+                        onChange={e => setField('address', e.target.value)}
+                        placeholder="Full postal address"
+                        rows={3}
+                        className="w-full text-sm font-medium text-stone-800 bg-stone-50 border border-stone-200 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:border-transparent transition resize-none leading-relaxed"
+                      />
+                    </div>
+
+                    {/* Notes */}
+                    <div>
+                      <label className="text-[9px] uppercase tracking-widest font-bold text-stone-400 flex items-center gap-1.5 mb-1">
+                        <FileText className="w-3 h-3" /> Notes (GST, PAN, Udyam, social handles…)
+                      </label>
+                      <textarea
+                        id="edit-notes"
+                        value={editedContact.notes || ''}
+                        onChange={e => setField('notes', e.target.value)}
+                        placeholder="Any additional info — GSTIN, PAN, @handles, taglines…"
+                        rows={2}
+                        className="w-full text-sm text-stone-700 bg-stone-50 border border-stone-200 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:border-transparent transition resize-none"
+                      />
+                    </div>
+
+                    {/* Action buttons */}
+                    <div className="pt-2 flex gap-3">
+                      <button
+                        id="btn-save-contact"
+                        onClick={() => downloadVCard(editedContact)}
+                        className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-4 rounded-2xl flex items-center justify-center gap-2 shadow-lg shadow-emerald-200 transition-all active:scale-[0.98]"
+                      >
+                        <UserPlus className="w-5 h-5" />
+                        Save to Contacts
+                      </button>
+                      <button
+                        id="btn-scan-again"
+                        onClick={reset}
+                        className="w-14 bg-stone-100 hover:bg-stone-200 text-stone-600 rounded-2xl flex items-center justify-center transition-all active:scale-[0.98]"
+                        title="Scan new card"
+                      >
+                        <RefreshCw className="w-5 h-5" />
+                      </button>
+                    </div>
                   </div>
                 </motion.div>
               )}
