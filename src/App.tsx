@@ -4,10 +4,12 @@
  */
 
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { Camera, RefreshCw, UserPlus, Download, Check, AlertCircle, Loader2, ScanLine, X, Globe, FileText, Mail, MapPin, Briefcase, Phone, Smartphone, ImagePlus } from 'lucide-react';
+import { Camera, RefreshCw, UserPlus, Check, AlertCircle, Loader2, ScanLine, X, Globe, FileText, Mail, MapPin, Phone, Smartphone, ImagePlus, Zap, Cpu } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { GoogleGenAI, Type, ThinkingLevel } from "@google/genai";
+import { GoogleGenAI, Type } from "@google/genai";
 import confetti from 'canvas-confetti';
+import { createWorker } from 'tesseract.js';
+import { parseContactFromText } from './contactParser';
 
 // --- Types ---
 
@@ -167,6 +169,7 @@ export default function App() {
   const [isCameraReady, setIsCameraReady] = useState(false);
   const [step, setStep] = useState<'front' | 'back' | 'review' | 'analyzing' | 'result'>('front');
   const [showFlash, setShowFlash] = useState(false);
+  const [activeProvider, setActiveProvider] = useState<'gemini' | 'groq' | 'openrouter' | 'tesseract' | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -297,218 +300,250 @@ export default function App() {
     e.target.value = '';
   }, [images]);
 
-  const scanCard = async (base64Images: string[], retryCount = 0) => {
-    if (isScanning && retryCount === 0) return; // Guard against multiple clicks
-    setIsScanning(true);
-    setError(null);
-    setPartialContact({});
-    setStep('analyzing');
-
-    try {
-      // @ts-ignore - Vite environment variable injection
-      const apiKey = (import.meta as any).env?.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
-
-      console.log("AI starting scan with images count:", base64Images.length);
-      if (apiKey) {
-        console.log("API Key found (starts with):", apiKey.substring(0, 4) + "...");
-      } else {
-        console.warn("API Key is missing or undefined.");
-      }
-
-      if (!apiKey || apiKey === "MY_GEMINI_API_KEY" || apiKey.includes("YOUR_API_KEY")) {
-        throw new Error("Gemini API Key is missing. Please set VITE_GEMINI_API_KEY in your project environment variables.");
-      }
-
-      const ai = new GoogleGenAI({ apiKey });
-      const compressedImages = await Promise.all(base64Images.map(img => resizeImage(img)));
-
-      const prompt = `You are an expert OCR system specialized in reading business/visiting cards with 100% accuracy.
+  // ─── Shared prompt & helpers ────────────────────────────────────────────────
+  const CARD_PROMPT = `You are an expert OCR system specialized in reading business/visiting cards with 100% accuracy.
 
 INSTRUCTIONS:
 1. Carefully read EVERY piece of text on the card image(s), including small, faint, or stylized text.
-2. The card may contain text in multiple languages (English, Hindi, Marathi, Gujarati, etc.). Extract ALL text regardless of language. If a name is in a non-Latin script, provide the Latin transliteration if possible, but prioritize accuracy.
+2. The card may contain text in multiple languages (English, Hindi, Marathi, Gujarati, etc.). Extract ALL text regardless of language.
 3. If there are multiple images, they represent the front and back of the SAME card — combine all information intelligently.
-4. Distinguish between brand/company names and personal names. If a person's name is also part of the company name (e.g., "John Doe Plumbing"), "John Doe" is the name and "John Doe Plumbing" is the company.
+4. Distinguish between brand/company names and personal names.
 
 EXTRACTION RULES:
 - "firstName" + "lastName": The PERSON's name. Look for honorifics (Mr., Dr., Adv.) as hints.
-- "company": The legal or brand name of the business. Look for suffixes like Pvt. Ltd., LLC, Inc., etc.
-- "title": Job title or designation. Be precise (e.g., "Founder & CEO" rather than just "CEO").
-- "mobiles": Primarily for personal/mobile numbers. Look for "M:", "Mob:", or 10-digit Indian numbers starting with 6-9.
-- "landlines": Office, desk, or fax numbers. Look for "T:", "Ph:", "Off:", or numbers with area/STD codes.
-- "email": Comprehensive extraction. Look for "@" symbol.
+- "company": The legal or brand name of the business.
+- "title": Job title or designation.
+- "mobiles": Personal/mobile numbers. Look for "M:", "Mob:", or 10-digit Indian numbers starting with 6-9.
+- "landlines": Office/desk numbers. Look for "T:", "Ph:", "Off:", or numbers with STD codes.
+- "email": Look for "@" symbol.
 - "website": Full URL or domain name.
-- "address": Complete postal address. Combine all related fragments (Building, Street, Area, City, State, PIN).
-- "notes": Extract GSTIN, PAN, Udyam numbers, social media handles (@handle), slogans/taglines, or any other professional certifications mentioned.
+- "address": Complete postal address.
+- "notes": GSTIN, PAN, Udyam numbers, social handles, slogans, certifications.
 
 QUALITY RULES:
-- NEVER confuse '0' (zero) with 'O' (letter) in phone numbers or IDs.
-- Preserve exact formatting for IDs like GST/PAN.
-- If a field is truly missing, return "" or [].
-- DO NOT hallucinate. If text is illegible, leave the field empty.
+- NEVER confuse '0' with 'O' in phone numbers. DO NOT hallucinate.
+- If a field is missing, return "" or [].
 
 Return ONLY a valid JSON object:
-{
-  "firstName": "string",
-  "lastName": "string",
-  "title": "string",
-  "company": "string",
-  "landlines": ["string"],
-  "mobiles": ["string"],
-  "email": "string",
-  "website": "string",
-  "address": "string",
-  "notes": "string"
-}`;
+{"firstName":"","lastName":"","title":"","company":"","landlines":[],"mobiles":[],"email":"","website":"","address":"","notes":""}`;
 
-      const imageParts = compressedImages.map(img => ({
-        inlineData: {
-          mimeType: "image/jpeg" as const,
-          data: img.split(',')[1]
-        }
-      }));
+  const sanitizeResult = (r: any): ContactInfo => ({
+    firstName: r.firstName || '',
+    lastName: r.lastName || '',
+    title: r.title || '',
+    company: r.company || '',
+    email: r.email || '',
+    website: r.website || '',
+    address: r.address || '',
+    notes: r.notes || '',
+    landlines: Array.isArray(r.landlines) ? r.landlines.filter(Boolean) : [],
+    mobiles: Array.isArray(r.mobiles) ? r.mobiles.filter(Boolean) : [],
+  });
 
-      const stream = await ai.models.generateContentStream({
-        model: "gemini-2.0-flash",
-        contents: [
-          {
-            role: "user",
-            parts: [
-              { text: prompt },
-              ...imageParts
-            ]
-          }
-        ],
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              firstName: { type: Type.STRING },
-              lastName: { type: Type.STRING },
-              title: { type: Type.STRING },
-              company: { type: Type.STRING },
-              landlines: { type: Type.ARRAY, items: { type: Type.STRING } },
-              mobiles: { type: Type.ARRAY, items: { type: Type.STRING } },
-              email: { type: Type.STRING },
-              website: { type: Type.STRING },
-              address: { type: Type.STRING },
-              notes: { type: Type.STRING }
-            }
-          }
-        }
-      });
+  const hasUsefulInfo = (r: any) =>
+    r.firstName || r.lastName || r.company || r.email ||
+    (r.mobiles?.length > 0) || (r.landlines?.length > 0);
 
-      let fullText = "";
-      // @ts-ignore - response object structure
-      for await (const chunk of stream.stream) {
-        fullText += (chunk.text || "");
-
-        // Try to parse partial JSON to show progress
-        try {
-          const cleaned = fullText.trim();
-          if (cleaned.startsWith('{')) {
-            const result: any = {};
-            const fields = ['firstName', 'lastName', 'title', 'company', 'email', 'website', 'address', 'notes'];
-            fields.forEach(field => {
-              const regex = new RegExp(`"${field}"\\s*:\\s*"([^"]*)"`, 'g');
-              const match = [...cleaned.matchAll(regex)].pop();
-              if (match) result[field] = match[1];
-            });
-
-            ['landlines', 'mobiles'].forEach(field => {
-              const regex = new RegExp(`"${field}"\\s*:\\s*\\[([^\\]]*)\\]`, 'g');
-              const match = [...cleaned.matchAll(regex)].pop();
-              if (match) {
-                try {
-                  const val = match[1].trim();
-                  if (val === '') {
-                    result[field] = [];
-                  } else {
-                    result[field] = val.split(',').map(s => s.trim().replace(/^"/, '').replace(/"$/, '').replace(/^'/, '').replace(/'$/, '')).filter(Boolean);
-                  }
-                } catch {
-                  // Fallback
-                }
-              }
-            });
-
-            if (Object.keys(result).length > 0) {
-              setPartialContact(prev => ({ ...prev, ...result }));
-            }
-          }
-        } catch (e) {
-          // Ignore partial parse errors
-        }
-      }
-
-      const finalResult = JSON.parse(fullText || "{}");
-
-      // Check if we got ANY useful information
-      const hasInfo = finalResult.firstName ||
-        finalResult.lastName ||
-        finalResult.company ||
-        finalResult.email ||
-        (finalResult.mobiles && finalResult.mobiles.length > 0) ||
-        (finalResult.landlines && finalResult.landlines.length > 0);
-
-      if (hasInfo) {
-        const sanitizedContact: ContactInfo = {
-          firstName: finalResult.firstName || "",
-          lastName: finalResult.lastName || "",
-          title: finalResult.title || "",
-          company: finalResult.company || "",
-          email: finalResult.email || "",
-          website: finalResult.website || "",
-          address: finalResult.address || "",
-          notes: finalResult.notes || "",
-          landlines: Array.isArray(finalResult.landlines) ? finalResult.landlines.filter(Boolean) : [],
-          mobiles: Array.isArray(finalResult.mobiles) ? finalResult.mobiles.filter(Boolean) : []
-        };
-
-        setContact(sanitizedContact);
-        setStep('result');
-        confetti({
-          particleCount: 100,
-          spread: 70,
-          origin: { y: 0.6 },
-          colors: ['#10b981', '#3b82f6', '#f59e0b']
-        });
-      } else {
-        throw new Error("Could not extract any contact information from the card. Please ensure the card is clearly visible and well-lit.");
-      }
-    } catch (err: any) {
-      console.error("Scanning error:", err);
-      const errorMessage = err.message || JSON.stringify(err);
-
-      if (retryCount < 2 && (
-        errorMessage.includes('xhr error') ||
-        errorMessage.includes('500') ||
-        errorMessage.includes('fetch') ||
-        errorMessage.includes('Rpc failed') ||
-        errorMessage.includes('429') ||
-        errorMessage.includes('RESOURCE_EXHAUSTED')
-      )) {
-        const delay = Math.pow(2, retryCount + 1) * 1000;
-        await new Promise(resolve => setTimeout(resolve, delay));
-        return scanCard(base64Images, retryCount + 1);
-      }
-
-      if (errorMessage.includes('429') || errorMessage.includes('RESOURCE_EXHAUSTED')) {
-        setError("API Quota Exceeded. The free tier limit has been reached. Please wait a moment before trying again.");
-        setCooldown(60);
-      } else if (errorMessage.includes("extract any contact information")) {
-        setError(errorMessage);
-      } else {
-        setError(errorMessage.includes('Rpc failed')
-          ? "The AI service is currently busy. Please try again."
-          : "Failed to scan the card. Please ensure the image is clear and try again.");
-      }
-      setStep('review'); // Stay on review so user can see error and retry
-    } finally {
-      setIsScanning(false);
-      setPartialContact(null);
+  // ─── Tier 0: Gemini (streaming, partial preview) ────────────────────────────
+  const scanWithGemini = async (base64Images: string[]): Promise<ContactInfo> => {
+    // @ts-ignore
+    const apiKey = (import.meta as any).env?.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
+    if (!apiKey || apiKey === 'MY_GEMINI_API_KEY' || apiKey.includes('YOUR_API_KEY')) {
+      throw new Error('NO_KEY');
     }
+    const ai = new GoogleGenAI({ apiKey });
+    const compressed = await Promise.all(base64Images.map(img => resizeImage(img)));
+    const imageParts = compressed.map(img => ({
+      inlineData: { mimeType: 'image/jpeg' as const, data: img.split(',')[1] }
+    }));
+    const stream = await ai.models.generateContentStream({
+      model: 'gemini-2.0-flash',
+      contents: [{ role: 'user', parts: [{ text: CARD_PROMPT }, ...imageParts] }],
+      config: {
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            firstName: { type: Type.STRING }, lastName: { type: Type.STRING },
+            title: { type: Type.STRING }, company: { type: Type.STRING },
+            landlines: { type: Type.ARRAY, items: { type: Type.STRING } },
+            mobiles: { type: Type.ARRAY, items: { type: Type.STRING } },
+            email: { type: Type.STRING }, website: { type: Type.STRING },
+            address: { type: Type.STRING }, notes: { type: Type.STRING }
+          }
+        }
+      }
+    });
+    let fullText = '';
+    // @ts-ignore
+    for await (const chunk of stream.stream) {
+      fullText += chunk.text || '';
+      try {
+        const cleaned = fullText.trim();
+        if (cleaned.startsWith('{')) {
+          const result: any = {};
+          ['firstName','lastName','title','company','email','website','address','notes'].forEach(f => {
+            const m = [...cleaned.matchAll(new RegExp(`"${f}"\\s*:\\s*"([^"]*)"`, 'g'))].pop();
+            if (m) result[f] = m[1];
+          });
+          ['landlines','mobiles'].forEach(f => {
+            const m = [...cleaned.matchAll(new RegExp(`"${f}"\\s*:\\s*\\[([^\\]]*)\\]`, 'g'))].pop();
+            if (m) { try { result[f] = m[1].trim() ? m[1].split(',').map((s: string) => s.trim().replace(/^"|"$|^'|'$/g,'')).filter(Boolean) : []; } catch { /**/ } }
+          });
+          if (Object.keys(result).length > 0) setPartialContact(prev => ({ ...prev, ...result }));
+        }
+      } catch { /**/ }
+    }
+    const r = JSON.parse(fullText || '{}');
+    if (!hasUsefulInfo(r)) throw new Error('NO_INFO');
+    return sanitizeResult(r);
+  };
+
+  // ─── Tier 1: Groq Vision (free, OpenAI-compatible) ─────────────────────────
+  const scanWithGroq = async (base64Images: string[]): Promise<ContactInfo> => {
+    // @ts-ignore
+    const apiKey = (import.meta as any).env?.VITE_GROQ_API_KEY;
+    if (!apiKey || apiKey.includes('YOUR')) throw new Error('NO_KEY');
+    const compressed = await Promise.all(base64Images.map(img => resizeImage(img)));
+    const imageContent = compressed.map(img => ({ type: 'image_url', image_url: { url: img } }));
+    const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+        messages: [{ role: 'user', content: [{ type: 'text', text: CARD_PROMPT }, ...imageContent] }],
+        response_format: { type: 'json_object' },
+        max_tokens: 1024,
+        temperature: 0.1,
+      })
+    });
+    if (!res.ok) {
+      const err = await res.text();
+      if (res.status === 429) throw new Error('QUOTA');
+      throw new Error(`Groq error ${res.status}: ${err}`);
+    }
+    const json = await res.json();
+    const r = JSON.parse(json.choices[0]?.message?.content || '{}');
+    if (!hasUsefulInfo(r)) throw new Error('NO_INFO');
+    setPartialContact(r);
+    return sanitizeResult(r);
+  };
+
+  // ─── Tier 2: OpenRouter free vision model ──────────────────────────────────
+  const scanWithOpenRouter = async (base64Images: string[]): Promise<ContactInfo> => {
+    // @ts-ignore
+    const apiKey = (import.meta as any).env?.VITE_OPENROUTER_API_KEY;
+    if (!apiKey || apiKey.includes('YOUR')) throw new Error('NO_KEY');
+    const compressed = await Promise.all(base64Images.map(img => resizeImage(img)));
+    const imageContent = compressed.map(img => ({ type: 'image_url', image_url: { url: img } }));
+    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': window.location.origin,
+        'X-Title': 'CardScan AI',
+      },
+      body: JSON.stringify({
+        model: 'meta-llama/llama-3.2-11b-vision-instruct:free',
+        messages: [{ role: 'user', content: [{ type: 'text', text: CARD_PROMPT }, ...imageContent] }],
+        response_format: { type: 'json_object' },
+        max_tokens: 1024,
+        temperature: 0.1,
+      })
+    });
+    if (!res.ok) {
+      const err = await res.text();
+      if (res.status === 429) throw new Error('QUOTA');
+      throw new Error(`OpenRouter error ${res.status}: ${err}`);
+    }
+    const json = await res.json();
+    const r = JSON.parse(json.choices[0]?.message?.content || '{}');
+    if (!hasUsefulInfo(r)) throw new Error('NO_INFO');
+    setPartialContact(r);
+    return sanitizeResult(r);
+  };
+
+  // ─── Tier 3: Tesseract.js — offline, no API needed ─────────────────────────
+  const scanWithTesseract = async (base64Images: string[]): Promise<ContactInfo> => {
+    const worker = await createWorker('eng', 1, {
+      logger: () => {}, // suppress logs
+    });
+    try {
+      let combinedText = '';
+      for (const img of base64Images) {
+        const preprocessed = await preprocessImageForOCR(img);
+        const { data: { text } } = await worker.recognize(preprocessed);
+        combinedText += text + '\n';
+      }
+      const contact = parseContactFromText(combinedText);
+      if (!hasUsefulInfo(contact)) throw new Error('NO_INFO');
+      setPartialContact(contact);
+      return contact;
+    } finally {
+      await worker.terminate();
+    }
+  };
+
+  // ─── Orchestrator: try providers in waterfall order ─────────────────────────
+  const scanCard = async (base64Images: string[]) => {
+    if (isScanning) return;
+    setIsScanning(true);
+    setError(null);
+    setPartialContact({});
+    setActiveProvider(null);
+    setStep('analyzing');
+
+    // @ts-ignore
+    const geminiKey = (import.meta as any).env?.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
+    // @ts-ignore
+    const groqKey = (import.meta as any).env?.VITE_GROQ_API_KEY;
+    // @ts-ignore
+    const openrouterKey = (import.meta as any).env?.VITE_OPENROUTER_API_KEY;
+
+    const providers: Array<{ name: 'gemini' | 'groq' | 'openrouter' | 'tesseract'; fn: () => Promise<ContactInfo>; available: boolean }> = [
+      { name: 'gemini',      fn: () => scanWithGemini(base64Images),      available: !!(geminiKey && geminiKey !== 'MY_GEMINI_API_KEY' && !geminiKey.includes('YOUR_API_KEY')) },
+      { name: 'groq',        fn: () => scanWithGroq(base64Images),        available: !!(groqKey && !groqKey.includes('YOUR')) },
+      { name: 'openrouter',  fn: () => scanWithOpenRouter(base64Images),  available: !!(openrouterKey && !openrouterKey.includes('YOUR')) },
+      { name: 'tesseract',   fn: () => scanWithTesseract(base64Images),   available: true },
+    ];
+
+    let lastError = '';
+    for (const provider of providers) {
+      if (!provider.available) continue;
+      setActiveProvider(provider.name);
+      try {
+        const result = await provider.fn();
+        setContact(result);
+        setStep('result');
+        confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 }, colors: ['#10b981', '#3b82f6', '#f59e0b'] });
+        setIsScanning(false);
+        setPartialContact(null);
+        setActiveProvider(null);
+        return;
+      } catch (err: any) {
+        const msg = err?.message || '';
+        console.warn(`[${provider.name}] failed:`, msg);
+        if (msg === 'NO_KEY') continue; // silently skip — no key configured
+        if (msg === 'QUOTA') {
+          console.warn(`[${provider.name}] quota exceeded, trying next provider`);
+          continue;
+        }
+        if (msg === 'NO_INFO') {
+          lastError = 'Could not extract contact information from this card. Please ensure it is clear and well-lit.';
+          continue; // try next provider — might do better
+        }
+        lastError = msg;
+        continue;
+      }
+    }
+
+    // All providers failed
+    setError(lastError || 'All scanning methods failed. Please check your API keys in the .env file or try a clearer image.');
+    setStep('review');
+    setIsScanning(false);
+    setPartialContact(null);
+    setActiveProvider(null);
   };
   const reset = () => {
     setImages([]);
@@ -793,6 +828,22 @@ Return ONLY a valid JSON object:
                     <Loader2 className="w-3 h-3 animate-spin" />
                     Extracting Data...
                   </p>
+                  {/* Active provider badge */}
+                  {activeProvider && (
+                    <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest border"
+                      style={{
+                        background: activeProvider === 'gemini' ? '#ecfdf5' : activeProvider === 'groq' ? '#eff6ff' : activeProvider === 'openrouter' ? '#faf5ff' : '#fefce8',
+                        color: activeProvider === 'gemini' ? '#059669' : activeProvider === 'groq' ? '#2563eb' : activeProvider === 'openrouter' ? '#7c3aed' : '#ca8a04',
+                        borderColor: activeProvider === 'gemini' ? '#a7f3d0' : activeProvider === 'groq' ? '#bfdbfe' : activeProvider === 'openrouter' ? '#ddd6fe' : '#fde68a',
+                      }}
+                    >
+                      {activeProvider === 'tesseract' ? <Cpu className="w-3 h-3" /> : <Zap className="w-3 h-3" />}
+                      {activeProvider === 'gemini' && 'Gemini AI'}
+                      {activeProvider === 'groq' && 'Groq · LLaMA 4'}
+                      {activeProvider === 'openrouter' && 'OpenRouter · LLaMA'}
+                      {activeProvider === 'tesseract' && 'Offline OCR'}
+                    </div>
+                  )}
 
                   <div className="h-8 w-3/4 bg-stone-100 rounded-lg overflow-hidden flex items-center">
                     {partialContact?.firstName ? (
@@ -856,7 +907,7 @@ Return ONLY a valid JSON object:
                   <motion.div
                     initial={{ width: "0%" }}
                     animate={{ width: "100%" }}
-                    transition={{ duration: 4, ease: "linear" }}
+                    transition={{ duration: activeProvider === 'tesseract' ? 12 : 5, ease: "linear" }}
                     className="h-full bg-emerald-500"
                   />
                 </div>

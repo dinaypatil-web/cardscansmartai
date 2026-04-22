@@ -24,6 +24,7 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-markdown": "^10.1.0",
+    "tesseract.js": "^7.0.0",
     "vite": "^6.2.0"
   },
   "devDependencies": {
