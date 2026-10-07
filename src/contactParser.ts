@@ -108,41 +108,44 @@ const JOB_TITLE_PATTERNS: Array<{ pattern: RegExp; weight: number }> = [
 const COMPANY_PATTERNS: Array<{ pattern: RegExp; weight: number }> = [
   // Strong legal suffixes
   { pattern: /\b(?:pvt|private)\s*\.?\s*(?:ltd|limited)\b/i, weight: 10 },
-  { pattern: /\bopc\s*pvt\b/i, weight: 10 },
-  { pattern: /\b(?:llp|lLP)\b/, weight: 9 },
-  { pattern: /\bltd\.?\b/i, weight: 9 },
-  { pattern: /\blimited\b/i, weight: 9 },
-  { pattern: /\bllc\b/i, weight: 9 },
-  { pattern: /\binc\.?\b/i, weight: 9 },
-  { pattern: /\bincorporated\b/i, weight: 9 },
-  { pattern: /\bcorp\.?\b/i, weight: 9 },
-  { pattern: /\bcorporation\b/i, weight: 9 },
-  { pattern: /\b(?:co|company)\.?\b/i, weight: 6 },
+  { pattern: /\bopc\s*(?:pvt|private)?\s*(?:ltd|limited)?\b/i, weight: 10 },
+  { pattern: /\b(?:llp|lLP)\b/, weight: 10 },
+  { pattern: /\bltd\.?\b/i, weight: 10 },
+  { pattern: /\blimited\b/i, weight: 10 },
+  { pattern: /\bllc\b/i, weight: 10 },
+  { pattern: /\binc\.?\b/i, weight: 10 },
+  { pattern: /\bincorporated\b/i, weight: 10 },
+  { pattern: /\bcorp\.?\b/i, weight: 10 },
+  { pattern: /\bcorporation\b/i, weight: 10 },
+  { pattern: /\b(?:co|company)\.?\b/i, weight: 7 },
   { pattern: /\bproprietorship\b/i, weight: 9 },
-  { pattern: /\bpartnership\b/i, weight: 8 },
+  { pattern: /\bpartnership\b/i, weight: 9 },
+  { pattern: /\b(?:and|\&)\s*(?:sons|brothers|bros\.?|co\.?)\b/i, weight: 9 },
 
   // Business entity types
   { pattern: /\bgroup\s+of\s+(?:companies|industries)\b/i, weight: 10 },
-  { pattern: /\bgroup\b/i, weight: 5 },
-  { pattern: /\b(?:enterprises?|ventures?|holdings?)\b/i, weight: 7 },
-  { pattern: /\binfra(?:structure)?\b/i, weight: 6 },
+  { pattern: /\bgroup\b/i, weight: 6 },
+  { pattern: /\b(?:enterprises?|ventures?|holdings?)\b/i, weight: 8 },
+  { pattern: /\binfra(?:structure)?\b/i, weight: 7 },
 
   // Service/Industry keywords
-  { pattern: /\b(?:solutions?|services?|technologies|tech)\b/i, weight: 5 },
-  { pattern: /\b(?:industries|associates|consultants|consulting)\b/i, weight: 6 },
-  { pattern: /\b(?:international|global|worldwide|overseas)\b/i, weight: 3 },
-  { pattern: /\b(?:foundation|institute|academy|school|college|university)\b/i, weight: 5 },
-  { pattern: /\b(?:labs?|studio|systems?)\b/i, weight: 4 },
-  { pattern: /\b(?:infotech|infosystems|softech|softtech|infocomm)\b/i, weight: 7 },
-  { pattern: /\b(?:traders?|trading|exports?|imports?|distributors?|suppliers?)\b/i, weight: 6 },
-  { pattern: /\b(?:hospital|clinic|pharmacy|medical|diagnostics|healthcare)\b/i, weight: 5 },
-  { pattern: /\b(?:builders?|construction|realty|real\s*estate|developers?|infra)\b/i, weight: 5 },
-  { pattern: /\b(?:motors?|automobiles?|auto|vehicles?)\b/i, weight: 4 },
-  { pattern: /\b(?:jewellers?|jewelers?|textiles?|garments?|fashion|boutique)\b/i, weight: 5 },
-  { pattern: /\b(?:publishers?|printing|press|media|publications?)\b/i, weight: 5 },
-  { pattern: /\b(?:agency|agencies|marketing|advertising|promotions?)\b/i, weight: 5 },
-  { pattern: /\b(?:logistics?|transport|cargo|shipping|courier|freight)\b/i, weight: 6 },
-  { pattern: /\b(?:foods?|catering|restaurant|hotel|hospitality|bakery)\b/i, weight: 5 },
+  { pattern: /\b(?:solutions?|services?|technologies|tech)\b/i, weight: 7 },
+  { pattern: /\b(?:industries|associates|consultants|consulting)\b/i, weight: 8 },
+  { pattern: /\b(?:international|global|worldwide|overseas)\b/i, weight: 4 },
+  { pattern: /\b(?:foundation|institute|academy|school|college|university)\b/i, weight: 6 },
+  { pattern: /\b(?:labs?|studio|systems?)\b/i, weight: 5 },
+  { pattern: /\b(?:infotech|infosystems|softech|softtech|infocomm)\b/i, weight: 8 },
+  { pattern: /\b(?:traders?|trading|exports?|imports?|distributors?|suppliers?)\b/i, weight: 8 },
+  { pattern: /\b(?:hospital|clinic|pharmacy|medical|diagnostics|healthcare)\b/i, weight: 6 },
+  { pattern: /\b(?:builders?|construction|realty|real\s*estate|developers?|infra)\b/i, weight: 7 },
+  { pattern: /\b(?:motors?|automobiles?|auto|vehicles?)\b/i, weight: 6 },
+  { pattern: /\b(?:jewellers?|jewelers?|textiles?|garments?|fashion|boutique)\b/i, weight: 7 },
+  { pattern: /\b(?:publishers?|printing|press|media|publications?)\b/i, weight: 6 },
+  { pattern: /\b(?:agency|agencies|marketing|advertising|promotions?)\b/i, weight: 6 },
+  { pattern: /\b(?:logistics?|transport|cargo|shipping|courier|freight)\b/i, weight: 7 },
+  { pattern: /\b(?:foods?|catering|restaurant|hotel|hospitality|bakery|sweets?)\b/i, weight: 6 },
+  { pattern: /\b(?:hardware|electricals?|electronics?|chemicals?|stationery)\b/i, weight: 7 },
+  { pattern: /\b(?:works|bhavan|kendra|mart|stores?|shop)\b/i, weight: 6 },
   { pattern: /\bmidc\b/i, weight: 4 },
 ];
 
@@ -388,6 +391,10 @@ function getNameScore(line: string, lineIndex: number, totalLines: number): numb
   if (line.includes('@')) return 0;
   if (/(?:www\.|https?:\/\/)/.test(line)) return 0;
 
+  // Disqualify if it matches company patterns or has high company score
+  const compScore = getCompanyScore(line);
+  if (compScore >= 5 || isStrongCompanyText(line)) return 0;
+
   let score = 5;
 
   // Boost: has name prefix / honorific
@@ -416,10 +423,12 @@ function getNameScore(line: string, lineIndex: number, totalLines: number): numb
   if (/[/:;#@{}()[\]]/.test(line)) score -= 4;
 
   // Reduce: contains common non-name keywords
-  if (/\b(?:road|street|floor|building|pvt|ltd|llp|email|phone|tel|fax|mob|cell|web|www|extn|near|opp|landmark|gstin|gst|pan|udyam|cin)\b/i.test(line)) score -= 8;
+  if (/\b(?:road|street|floor|building|pvt|ltd|llp|email|phone|tel|fax|mob|cell|web|www|extn|near|opp|landmark|gstin|gst|pan|udyam|cin|enterprises?|industries|trading|solutions?|services?|technologies|associates|builders?|jewellers?)\b/i.test(line)) score -= 10;
 
   // Reduce: looks like a phone number pattern
   if (/^[\d\s\+\-\.\(\)]{7,}$/.test(line)) score -= 8;
+
+  if (compScore >= 3) score -= 8;
 
   return Math.max(0, score);
 }
@@ -603,20 +612,29 @@ export function parseContactFromText(rawText: string): ContactInfo {
   const addressParts: string[] = [];
   for (const a of analyses) {
     if (a.assignedAs !== null) continue;
-    if (a.addressScore >= 4) {
+    if (a.addressScore >= 3 || PIN_CODE_REGEX.test(a.line) || isAddressLikeText(a.line)) {
       addressParts.push(a.line);
       a.assignedAs = 'address';
     }
   }
   // Also grab adjacent unassigned lines near address lines (address continuation)
-  for (let i = 0; i < analyses.length; i++) {
-    const a = analyses[i];
-    if (a.assignedAs === 'address') {
-      // Check next line — if it's unassigned and could be address continuation
-      const next = analyses[i + 1];
-      if (next && next.assignedAs === null && next.addressScore >= 2) {
-        addressParts.push(next.line);
-        next.assignedAs = 'address';
+  let addressExpanded = true;
+  while (addressExpanded) {
+    addressExpanded = false;
+    for (let i = 0; i < analyses.length; i++) {
+      if (analyses[i].assignedAs === 'address') {
+        // check previous line
+        if (i > 0 && analyses[i - 1].assignedAs === null && (analyses[i - 1].addressScore >= 2 || isAddressLikeText(analyses[i - 1].line))) {
+          analyses[i - 1].assignedAs = 'address';
+          addressParts.unshift(analyses[i - 1].line);
+          addressExpanded = true;
+        }
+        // check next line
+        if (i < analyses.length - 1 && analyses[i + 1].assignedAs === null && (analyses[i + 1].addressScore >= 2 || isAddressLikeText(analyses[i + 1].line))) {
+          analyses[i + 1].assignedAs = 'address';
+          addressParts.push(analyses[i + 1].line);
+          addressExpanded = true;
+        }
       }
     }
   }
@@ -710,7 +728,16 @@ export function parseContactFromText(rawText: string): ContactInfo {
   const noteLines: string[] = [];
   for (const a of analyses) {
     if (a.assignedAs === null && a.line.length > 2) {
-      noteLines.push(a.line);
+      if (isAddressLikeText(a.line)) {
+        if (contact.address) {
+          contact.address += `, ${a.line}`;
+        } else {
+          contact.address = a.line;
+        }
+        a.assignedAs = 'address';
+      } else {
+        noteLines.push(a.line);
+      }
     }
   }
 
@@ -733,7 +760,7 @@ export function parseContactFromText(rawText: string): ContactInfo {
   contact.mobiles = [...new Set(contact.mobiles)];
   contact.landlines = [...new Set(contact.landlines)];
 
-  return contact;
+  return cleanAndNormalizeContact(contact);
 }
 
 // ============================================================
@@ -789,4 +816,226 @@ export function parsePartialContact(rawText: string): Partial<ContactInfo> {
   }
 
   return partial;
+}
+
+// ============================================================
+// POST-PROCESSING NORMALIZATION & DISAMBIGUATION
+// ============================================================
+
+export const STRONG_COMPANY_REGEX = /\b(?:pvt|private|ltd|limited|llp|llc|inc|corp|corporation|opc|proprietorship|partnership|enterprises?|industries|trading|traders?|solutions?|services?|technologies|tech|associates|consultants?|consulting|builders?|developers?|infra(?:structure)?|holdings?|ventures?|logistics?|agency|agencies|studios?|systems?|infotech|softech|distributors?|suppliers?|exports?|imports?|jewellers?|jewelers?|textiles?|garments?|motors?|automobiles?|auto|hardware|stationery|electricals?|electronics?|chemicals?|pharma(?:ceuticals)?|hospital|clinic|diagnostics|healthcare|publishers?|printers?|press|foods?|catering|restaurant|hotel|hospitality|bakery|sweets?|supermarket|mart|stores?|shop|bhavan|kendra|co\.?|brothers|bros\.?|sons|works|foundation|institute|academy|school|college|university|group\s+of)\b/i;
+
+export function isStrongCompanyText(text: string): boolean {
+  if (!text || text.trim().length === 0) return false;
+  return STRONG_COMPANY_REGEX.test(text.trim());
+}
+
+export function isLikelyPersonName(text: string): boolean {
+  const clean = text.trim();
+  if (!clean || clean.length < 2 || clean.length > 50) return false;
+  // If it has digits, @, http, it's not a person name
+  if (/\d/.test(clean) || clean.includes('@') || /https?:\/\//i.test(clean)) return false;
+  // If it matches strong company words
+  if (isStrongCompanyText(clean)) return false;
+  // Check word count: human names are typically 1 to 4 words
+  const words = clean.split(/\s+/);
+  if (words.length > 4) return false;
+  // Honorifics definitely mean person
+  if (/^(?:mr|mrs|ms|miss|dr|prof|shri|smt|ca|cs|adv|er|ar)\.?\s+/i.test(clean)) return true;
+  // 2-3 words containing standard alpha characters
+  return /^[a-zA-Z\s.'-]+$/.test(clean);
+}
+
+export const ADDRESS_INDICATORS_REGEX = /\b(?:road|rd\b|street|st\b|marg|path|lane|gali|chowk|rasta|cross|avenue|ave\b|building|bldg\b|tower|complex|plaza|arcade|mall|centre|center|floor|flr\b|flat|plot|shop|gala|office|cabin|sector|block|phase|wing|nagar|colony|society|residency|enclave|vihar|puram|layout|village|taluk|taluka|dist\b|district|near\b|opp\b|opposite|behind|beside|next\s+to|adjacent|post\s+office|p\.?o\.?|pin\s*code|pincode|pin\b|zip|landmark|midc\b|gidc\b|industrial\s+(?:area|estate))\b/i;
+
+export function isAddressLikeText(text: string): boolean {
+  const clean = text.trim();
+  if (!clean || clean.length < 5) return false;
+  // 6-digit Indian PIN code or 5-digit zip code
+  if (/\b[1-9]\d{5}\b/.test(clean) || /\b\d{5}(?:-\d{4})?\b/.test(clean)) return true;
+  // Contains common address words
+  if (ADDRESS_INDICATORS_REGEX.test(clean)) return true;
+  // Contains known city name followed by comma or end
+  const lower = clean.toLowerCase();
+  for (const city of CITY_NAMES) {
+    if (new RegExp(`\\b${city}\\b`, 'i').test(lower)) {
+      if (/\d|,|\b(?:near|opp|road|st|nagar|colony|lane|chowk|floor|bldg)\b/i.test(clean)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * Normalizes and disambiguates contact information extracted from AI or OCR.
+ * Corrects name vs company confusion and prevents address from leaking into notes/remarks.
+ */
+export function cleanAndNormalizeContact(contact: ContactInfo): ContactInfo {
+  let {
+    firstName = '',
+    lastName = '',
+    title = '',
+    company = '',
+    landlines = [],
+    mobiles = [],
+    email = '',
+    website = '',
+    address = '',
+    notes = '',
+  } = contact;
+
+  firstName = (firstName || '').trim();
+  lastName = (lastName || '').trim();
+  title = (title || '').trim();
+  company = (company || '').trim();
+  email = (email || '').trim();
+  website = (website || '').trim();
+  address = (address || '').trim();
+  notes = (notes || '').trim();
+  landlines = (Array.isArray(landlines) ? landlines : []).map(s => String(s).trim()).filter(Boolean);
+  mobiles = (Array.isArray(mobiles) ? mobiles : []).map(s => String(s).trim()).filter(Boolean);
+
+  // 1. Honorific extraction from name (e.g. "Dr. Rajesh", "Mr. Amit", "Adv. Suresh", "Shri R. K. Gupta")
+  const honorificMatch = firstName.match(/^(?:(mr|mrs|ms|miss|dr|prof|shri|smt|ca|cs|adv|er|ar)\.?)\s+/i);
+  if (honorificMatch) {
+    const honorific = honorificMatch[0].trim();
+    firstName = firstName.slice(honorificMatch[0].length).trim();
+    if (!title) {
+      if (/^dr\.?$/i.test(honorific)) title = 'Doctor';
+      else if (/^adv\.?$/i.test(honorific)) title = 'Advocate';
+      else if (/^ca\.?$/i.test(honorific)) title = 'Chartered Accountant';
+      else if (/^cs\.?$/i.test(honorific)) title = 'Company Secretary';
+      else if (/^er\.?$/i.test(honorific)) title = 'Engineer';
+      else if (/^ar\.?$/i.test(honorific)) title = 'Architect';
+      else if (/^prof\.?$/i.test(honorific)) title = 'Professor';
+    }
+  }
+
+  // 2. Title extraction from company if company has "Proprietor: Name" or "Director: Name"
+  const compTitleMatch = company.match(/^(?:(proprietor|prop\.?|director|partner|managing\s+director|md|ceo|founder|owner)\s*[:\-–]\s*)(.+)$/i);
+  if (compTitleMatch) {
+    const extractedTitle = compTitleMatch[1];
+    const extractedPerson = compTitleMatch[2].trim();
+    if (!title) title = extractedTitle;
+    if (!firstName && !lastName) {
+      const parts = extractedPerson.split(/\s+/);
+      firstName = parts[0] || '';
+      lastName = parts.slice(1).join(' ') || '';
+    }
+    company = '';
+  }
+
+  // 3. Check if company vs person name are swapped or misclassified
+  const fullName = `${firstName} ${lastName}`.trim();
+  const isNameACompany = isStrongCompanyText(fullName);
+  const isCompanyAPerson = company && !isStrongCompanyText(company) && isLikelyPersonName(company);
+
+  if (isNameACompany && isCompanyAPerson) {
+    // Exact swap detected! E.g. name = "Apex Technologies Pvt Ltd", company = "Rajesh Kumar Sharma"
+    const tempCompany = fullName;
+    const nameParts = company.split(/\s+/);
+    firstName = nameParts[0] || '';
+    lastName = nameParts.slice(1).join(' ') || '';
+    company = tempCompany;
+  } else if (isNameACompany && !company) {
+    // Name is actually a company, and company is empty! E.g. name = "Krishna Jewellers", company = ""
+    company = fullName;
+    firstName = '';
+    lastName = '';
+  } else if (!fullName && company && isLikelyPersonName(company) && !isStrongCompanyText(company)) {
+    // Only company was filled, but it's a person name
+    const parts = company.split(/\s+/);
+    firstName = parts[0] || '';
+    lastName = parts.slice(1).join(' ') || '';
+    company = '';
+  } else if (company && fullName && company.toLowerCase() === fullName.toLowerCase()) {
+    // Company and Name are identical:
+    if (isStrongCompanyText(company)) {
+      firstName = '';
+      lastName = '';
+    } else {
+      company = '';
+    }
+  }
+
+  // 4. Address vs Notes / Remarks Reconciliation
+  // Many models or OCR pipelines mistakenly dump address lines into notes/remarks.
+  if (notes) {
+    // Split notes by separators (|, newlines, or semicolons)
+    const noteSegments = notes.split(/[\n|;]+/).map(s => s.trim()).filter(Boolean);
+    const nonAddressNotes: string[] = [];
+    const addressCandidates: string[] = [];
+
+    for (const segment of noteSegments) {
+      // Check if segment is a tax ID, registration ID, or social handle
+      const isTaxOrSocial = /\b(?:GSTIN|GST|PAN|UDYAM|CIN|ISO|TAN|MSME)\b/i.test(segment) ||
+        /@[\w._]+/.test(segment) ||
+        /(?:linkedin|twitter|facebook|instagram)\.com/i.test(segment);
+
+      if (isTaxOrSocial) {
+        nonAddressNotes.push(segment);
+        continue;
+      }
+
+      // Check if this segment contains address features
+      if (isAddressLikeText(segment)) {
+        addressCandidates.push(segment);
+      } else {
+        nonAddressNotes.push(segment);
+      }
+    }
+
+    if (addressCandidates.length > 0) {
+      if (!address) {
+        address = addressCandidates.join(', ');
+      } else {
+        // Only append parts of addressCandidates that are not already present in address
+        const toAppend = addressCandidates.filter(seg => !address.toLowerCase().includes(seg.toLowerCase().trim()));
+        if (toAppend.length > 0) {
+          address = `${address}, ${toAppend.join(', ')}`;
+        }
+      }
+      notes = nonAddressNotes.join(' | ');
+    }
+  }
+
+  // Also check if address contains tax IDs / social handles that belong in notes
+  if (address) {
+    const gstInAddr = [...address.matchAll(/\b\d{2}[A-Z]{5}\d{4}[A-Z][A-Z\d]Z[A-Z\d]\b/g)].map(m => `GSTIN: ${m[0]}`);
+    const panInAddr = [...address.matchAll(/\b[A-Z]{5}\d{4}[A-Z]\b/g)]
+      .filter(m => !address.includes(`GSTIN: ${m[0]}`))
+      .map(m => `PAN: ${m[0]}`);
+    const udyamInAddr = [...address.matchAll(/UDYAM[\-\s]?[A-Z]{2}[\-\s]?\d{2}[\-\s]?\d{7}/gi)].map(m => `Udyam: ${m[0]}`);
+
+    const extractedFromAddr = [...gstInAddr, ...panInAddr, ...udyamInAddr];
+    if (extractedFromAddr.length > 0) {
+      // Remove them from address
+      address = address
+        .replace(/\b\d{2}[A-Z]{5}\d{4}[A-Z][A-Z\d]Z[A-Z\d]\b/g, '')
+        .replace(/\b[A-Z]{5}\d{4}[A-Z]\b/g, '')
+        .replace(/UDYAM[\-\s]?[A-Z]{2}[\-\s]?\d{2}[\-\s]?\d{7}/gi, '')
+        .replace(/,\s*,/g, ',')
+        .replace(/^\s*,|\s*,\s*$/g, '')
+        .trim();
+
+      const existingNotes = notes ? notes.split(' | ') : [];
+      notes = [...new Set([...existingNotes, ...extractedFromAddr])].join(' | ');
+    }
+  }
+
+  // Clean address formatting
+  address = address.replace(/\s{2,}/g, ' ').replace(/,\s*,/g, ', ').replace(/^\s*,\s*|\s*,\s*$/g, '').trim();
+
+  return {
+    firstName,
+    lastName,
+    title,
+    company,
+    landlines,
+    mobiles,
+    email,
+    website,
+    address,
+    notes,
+  };
 }

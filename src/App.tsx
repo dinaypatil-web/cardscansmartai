@@ -9,7 +9,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { GoogleGenAI, Type } from "@google/genai";
 import confetti from 'canvas-confetti';
 import { createWorker } from 'tesseract.js';
-import { parseContactFromText } from './contactParser';
+import { parseContactFromText, cleanAndNormalizeContact } from './contactParser';
 
 // --- Types ---
 
@@ -351,80 +351,68 @@ export default function App() {
   }, [images]);
 
   // ─── Shared prompt & helpers ──────────────────────────────────────────────────
-  const CARD_PROMPT = `You are a world-class business card OCR specialist. Extract ALL contact information with maximum accuracy.
+  // ─── Shared prompt & helpers ──────────────────────────────────────────────────
+  const CARD_PROMPT = `You are a world-class business card OCR and entity extraction specialist.
+Extract ALL contact information with extreme precision and correct field assignment.
 
-CRITICAL READING RULES:
-1. Read EVERY visible character — including 6-8pt text, faint ink, embossed/foil print, and stylized fonts.
-2. Recognize ALL languages: English, Hindi, Marathi, Gujarati, Tamil, Telugu, Kannada, Bengali, etc. For non-Latin scripts, provide phonetic transliteration.
-3. Multiple images = FRONT and BACK of ONE card — merge ALL data intelligently, never duplicate.
-4. Correct known OCR confusions you spot: I↔1, O↔0, l↔|, S↔5, B↔8, G↔6.
+CRITICAL FIELD IDENTIFICATION RULES:
 
-FIELD-BY-FIELD EXTRACTION GUIDE:
+1. PERSON NAME (firstName, lastName) vs COMPANY NAME (company):
+  • firstName + lastName: The real HUMAN individual's name ONLY.
+    - Clues: Preceded or followed by honorifics (Mr., Mrs., Ms., Dr., Prof., Shri, Smt., Er., Adv., CA, CS, Ar.) or designation/title (Director, Proprietor, Partner, Founder, CEO, Manager, Consultant, Advocate, etc.).
+    - Usually 2 to 4 words representing a personal human name (e.g., "Rajesh Sharma", "Anil K. Gupta", "Pooja Mehta").
+    - NEVER put a company, business, shop, firm, or brand name into firstName or lastName!
+  • company: The registered business, firm, enterprise, shop, organization, or commercial brand name.
+    - Look for legal suffixes: Pvt. Ltd., Ltd., LLP, LLC, Inc., Corp., OPC, Proprietorship, Partnership.
+    - Look for business/trade terms: Enterprises, Industries, Solutions, Technologies, Services, Trading, Traders, Associates, Consultants, Builders, Developers, Infra, Group, Studio, Agency, Jewellers, Textiles, Motors, Automobiles, Hardware, Electricals, Electronics, Stationery, Foods, Clinic, Hospital, Pharmacy, Works, Stores, Mart, Shop, Co., Brothers, & Sons.
+    - Disambiguation examples:
+      * "SHARMA TRADING CO." and "Proprietor: Ramesh Sharma"
+        → company: "Sharma Trading Co.", firstName: "Ramesh", lastName: "Sharma", title: "Proprietor"
+      * Card has ONLY "KRISHNA JEWELLERS" with no personal human name
+        → company: "Krishna Jewellers", firstName: "", lastName: ""
+      * Personal doctor/advocate card "Dr. Sunil Patil, MD" with no company
+        → firstName: "Sunil", lastName: "Patil", title: "Doctor", company: "" (NEVER duplicate person name into company)
 
-firstName + lastName — The HUMAN person's name only.
-  • Honorifics hint at a name line: Mr., Mrs., Ms., Dr., Prof., Shri, Smt., Er., Adv., CA, CS, Ar.
-  • ALL-CAPS names are very common: "RAJESH KUMAR SHARMA" → firstName:"Rajesh", lastName:"Kumar Sharma".
-  • Do NOT place company/brand name here.
+2. COMPLETE ADDRESS (address) vs NOTES / REMARKS (notes):
+  • address: Complete physical and postal premises location as ONE unified string.
+    - Business card addresses typically span 2 to 4 lines and include: shop/flat/plot/gala/office number, floor, building/tower/complex name, street/road (Marg, Road, Street, Lane, Chowk), area/locality/nagar/colony, landmark (Opp., Near, Behind, Beside), industrial area (MIDC, GIDC, Phase, Sector), city, district, state, and 6-digit PIN code.
+    - YOU MUST COMBINE ALL THESE ADDRESS LINES TOGETHER with commas into the "address" field.
+    - ABSOLUTE PROHIBITION: NEVER put address lines, street names, building names, landmarks, area names, city names, or PIN codes into "notes"!
+  • notes: Strictly reserved for secondary non-address identifiers:
+    - Tax & registration IDs: GSTIN (15 characters), PAN (10 characters), Udyam (UDYAM-...), CIN, IEC, MSME registration.
+    - Social media handles: @instagram, twitter/X, LinkedIn, Facebook.
+    - ISO certifications, company taglines/slogans, or service lists.
+    - If text is part of a location, premises, street, landmark, area, city, or postal code, IT BELONGS IN "address", NEVER in "notes".
 
-company — Full registered business name.
-  • Entity suffixes: Pvt. Ltd., Ltd., LLP, OPC, Proprietorship, Partnership.
-  • Business words: Enterprises, Associates, Industries, Trading, Services, Solutions, Technologies, Consultants, Builders, Infra, Group.
+3. TITLE (title):
+  • The person's professional job role or designation (e.g. Managing Director, MD, Director, Proprietor, Partner, Founder, CEO, GM, Manager, Executive, Consultant, Advocate, Doctor, Engineer).
 
-title — Exact job designation.
-  • Common Indian titles: Managing Director, MD, Director, Proprietor, Partner, Founder, CEO, GM, DGM, AGM, VP, Manager, Executive, Officer, Engineer, Architect, Consultant, Advocate, CA, CS.
-  • Preserve full phrasing: "Senior Sales Executive" not just "Executive".
+4. PHONE NUMBERS (mobiles vs landlines):
+  • mobiles: Mobile/cellular numbers only (10 digits starting with 6, 7, 8, or 9; or with +91 country code).
+  • landlines: Office/desk phone, STD code numbers (022, 011, 080, etc.), and fax numbers.
+  • Mutually exclusive: Each number goes into exactly ONE array. Never duplicate across arrays.
 
-mobiles — Mobile/cellular numbers ONLY.
-  • Indian mobiles: 10 digits starting with 6, 7, 8, or 9.
-  • With country code: +91 98765 43210 or +91-9876543210.
-  • Labels: M:, Mob:, Cell:, Mobile:, WhatsApp:, WA:.
-  • Capture ALL mobile numbers — some cards have 2-3.
+5. ZERO HALLUCINATION:
+  • If a field is absent/illegible on the card, return "" or []. Never guess or invent data.
 
-landlines — Office, landline, and fax numbers ONLY.
-  • Indian STD format: 2-4 digit city code + 6-8 digit number.
-  • City codes: 022 (Mumbai), 011 (Delhi), 080 (Bangalore), 044 (Chennai), 033 (Kolkata), 040 (Hyderabad), 020 (Pune), 079 (Ahmedabad), 0261 (Surat), 0712 (Nagpur).
-  • Examples: (022) 2345-6789, 011-23456789, 0261-2345678.
-  • Labels: T:, Tel:, Ph:, Phone:, Off:, Office:, Fax:, F:, Res:.
-  • Fax numbers go here.
-
-email — Email address containing @. Extract verbatim.
-
-website — Website URL. Add "https://" prefix if missing.
-
-address — Complete postal address as one string.
-  • Include: shop/flat/gala/plot number, building, floor, street/road, area, city, state, PIN code.
-  • Indian terms: Gala No., Shop No., Plot No., S.No., Opp., Near, S.V. Road, Nagar, Colony, Chowk, Industrial Estate, MIDC, GIDC.
-  • Join multi-line fragments with ", ".
-
-notes — All remaining text not fitting above:
-  • GSTIN: 15-char format starting with 2-digit state code (e.g. 27AABCU9603R1ZX).
-  • PAN: 10-char AAAAA9999A format.
-  • Udyam/MSME: starts with "UDYAM-" (e.g. UDYAM-MH-04-0123456).
-  • CIN: starts with L or U followed by numbers.
-  • Social media: @handle, LinkedIn, Twitter/X, Instagram.
-  • ISO certifications, taglines, slogans, QR labels, service lists, any other identifiers.
-
-ZERO-HALLUCINATION RULES:
-• If a field is absent/illegible → return "" or []. NEVER guess or invent data.
-• Mobile and landline are MUTUALLY EXCLUSIVE — each number goes in exactly ONE array, never both.
-• Do NOT duplicate any number across arrays.
-• Preserve original number formatting (spaces, dashes, country codes).
-
-Return ONLY this exact JSON (no markdown, no explanation, nothing else):
+Return ONLY this exact JSON:
 {"firstName":"","lastName":"","title":"","company":"","landlines":[],"mobiles":[],"email":"","website":"","address":"","notes":""}`;
 
-  const sanitizeResult = (r: any): ContactInfo => ({
-    firstName: r.firstName || '',
-    lastName: r.lastName || '',
-    title: r.title || '',
-    company: r.company || '',
-    email: r.email || '',
-    website: r.website || '',
-    address: r.address || '',
-    notes: r.notes || '',
-    landlines: Array.isArray(r.landlines) ? r.landlines.filter(Boolean) : [],
-    mobiles: Array.isArray(r.mobiles) ? r.mobiles.filter(Boolean) : [],
-  });
+  const sanitizeResult = (r: any): ContactInfo => {
+    const raw: ContactInfo = {
+      firstName: r.firstName || '',
+      lastName: r.lastName || '',
+      title: r.title || '',
+      company: r.company || '',
+      email: r.email || '',
+      website: r.website || '',
+      address: r.address || '',
+      notes: r.notes || '',
+      landlines: Array.isArray(r.landlines) ? r.landlines.filter(Boolean) : [],
+      mobiles: Array.isArray(r.mobiles) ? r.mobiles.filter(Boolean) : [],
+    };
+    return cleanAndNormalizeContact(raw);
+  };
 
   const hasUsefulInfo = (r: any) =>
     r.firstName || r.lastName || r.company || r.email ||
@@ -450,12 +438,48 @@ Return ONLY this exact JSON (no markdown, no explanation, nothing else):
         responseSchema: {
           type: Type.OBJECT,
           properties: {
-            firstName: { type: Type.STRING }, lastName: { type: Type.STRING },
-            title: { type: Type.STRING }, company: { type: Type.STRING },
-            landlines: { type: Type.ARRAY, items: { type: Type.STRING } },
-            mobiles: { type: Type.ARRAY, items: { type: Type.STRING } },
-            email: { type: Type.STRING }, website: { type: Type.STRING },
-            address: { type: Type.STRING }, notes: { type: Type.STRING }
+            firstName: {
+              type: Type.STRING,
+              description: "First name of the human person only. Do not put company, shop, or firm name here."
+            },
+            lastName: {
+              type: Type.STRING,
+              description: "Last name or surname of the human person only. Do not put company or business name here."
+            },
+            title: {
+              type: Type.STRING,
+              description: "Job designation or professional title (e.g., Proprietor, Director, Partner, Manager, CEO, Consultant, Advocate, Doctor)."
+            },
+            company: {
+              type: Type.STRING,
+              description: "Name of the business, enterprise, firm, organization, shop, or commercial brand. Never put human person's name here."
+            },
+            landlines: {
+              type: Type.ARRAY,
+              items: { type: Type.STRING },
+              description: "Landline, office, STD, or fax phone numbers."
+            },
+            mobiles: {
+              type: Type.ARRAY,
+              items: { type: Type.STRING },
+              description: "Mobile or WhatsApp cellular phone numbers."
+            },
+            email: {
+              type: Type.STRING,
+              description: "Email address."
+            },
+            website: {
+              type: Type.STRING,
+              description: "Website URL with https://."
+            },
+            address: {
+              type: Type.STRING,
+              description: "Full postal address combining all lines: shop/plot/office number, building, street, area, landmark, city, state, PIN code. Never put address lines in notes."
+            },
+            notes: {
+              type: Type.STRING,
+              description: "Only tax IDs (GSTIN, PAN, Udyam, CIN), social media handles, or slogans. Never include address or location text."
+            }
           }
         }
       }
@@ -1242,15 +1266,16 @@ Return ONLY this exact JSON (no markdown, no explanation, nothing else):
                     </div>
 
                     {/* Notes */}
+                    {/* Notes / Remarks */}
                     <div>
                       <label className="text-[9px] uppercase tracking-widest font-bold text-stone-400 flex items-center gap-1.5 mb-1">
-                        <FileText className="w-3 h-3" /> Notes (GST, PAN, Udyam, social handles…)
+                        <FileText className="w-3 h-3" /> Notes / Remarks (GST, PAN, Udyam, social handles…)
                       </label>
                       <textarea
                         id="edit-notes"
                         value={editedContact.notes || ''}
                         onChange={e => setField('notes', e.target.value)}
-                        placeholder="Any additional info — GSTIN, PAN, @handles, taglines…"
+                        placeholder="GSTIN, PAN, Udyam, social handles, taglines (not address)…"
                         rows={2}
                         className="w-full text-sm text-stone-700 bg-stone-50 border border-stone-200 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:border-transparent transition resize-none"
                       />
